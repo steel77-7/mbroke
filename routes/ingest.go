@@ -4,7 +4,7 @@ import (
 	"log"
 	"github.com/redis/go-redis/v9"
 	"github.com/gin-gonic/gin"
-	"broker/utils"
+	"github.com/mbroke/utils"
 )
 func Ingest(c *gin.Context) {
 	log.SetPrefix("Error in ingest: ")

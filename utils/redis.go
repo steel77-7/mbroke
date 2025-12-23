@@ -1,22 +1,34 @@
 package utils
 
 import (
-	"log"
-	"broker/types"
-	"sync"
+	"context"
+
+	"github.com/mbroke/types"
 	"github.com/redis/go-redis/v9"
 )
 
-
-Redis := redis.NewClien(&redis.Options{
-	Addr:"localhost:6379" ,
-	Password:"",
-	DB:0,
-	Protocol : 2
+var Redis = redis.NewClien(&redis.Options{
+	Addr:     "localhost:6379",
+	Password: "",
+	DB:       0,
+	Protocol: 2,
 })
 
-CTX := context.Background()
+var CTX = context.Background()
 
-Ingest_channel := make (chan types.Job , 1000)
+func redis_init() {
+	_, err := Redis.XGroupCreateMkStream(CTX, "ingest:primary", "primary", "0").Err()
+	if err != nil && err.Error() {
+		panic(err)
+	}
+	_, err2 := Redis.XGroupCreateMkStream(CTX, "ingest:dead_end", "primary", "0").Err()
+	if err2 != nil && err2.Error() {
+		panic(err)
+	}
+}
 
-Worker_channel := make(chan types.Job , 1000)
+var Ingest_channel = make(chan types.Job, 1000)
+
+var Worker_channel = make(chan types.Job, 1000)
+
+var Retry_channel = make(chan types.Job, 1000)

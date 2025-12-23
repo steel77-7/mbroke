@@ -3,9 +3,10 @@ package types
 type Job struct {
 	ID string `json:"id"`
 	//	Worker *Worker `json:"worker"`
-	Count int    `json:"count"`
-	Data  string `json:"data"`
-	Max   int    `json:"max"`
+	Status bool   `json:"status"`
+	Count  int    `json:"count"`
+	Data   string `json:"data"`
+	Max    int    `json:"max"`
 }
 
 type JobTbs struct {

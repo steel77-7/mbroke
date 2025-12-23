@@ -2,8 +2,8 @@ package routes
 
 import(
 	"log"
-	"broker/types"
-	"broker/utils"
+	"github.com/mbroke/types"
+	"github.com/mbroke/utils"
 	"github.com/gin-gonic/gin"
 	"encoding/json"
 	"time"
@@ -21,7 +21,7 @@ func Worker_feeding(c *gin.Context){
 		c.JSON(500 , c.H{
 			"message": "No id provided" ,
 			"status": 500 ,
-			"error":err
+			"error":err,
 		})
 		return
 	}

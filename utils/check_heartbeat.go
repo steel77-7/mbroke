@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mbroke/types"
+	"github.com/redis/go-redis/v9"
 )
 
 type work_map struct {
@@ -21,7 +22,23 @@ func Check_hearbeat() {
 	for {
 		for key, value := range Worker_map.list {
 			if time.Now().UTC().UnixMilli()-value.Last_ping > 10000 {
-				delete(Worker_map.list, key)
+				res, err := Redis.XPending(CTX, &redis.XPendingExtArgs{
+					Stream: "ingest:primary",
+					Group:  "primary",
+					Start:  "-",
+					End:    "+",
+					Count:  10,
+				}).Result()
+				if res.RetryCount > 5 {
+
+				}
+				if err != nil {
+					log.Print("in the check heartbeat utils" + err)
+					continue
+				}
+
+				Retry_channel <- delete(Worker_map.list, key)
+
 				//implement logic for res[ushing the request]
 			}
 		}
