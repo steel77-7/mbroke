@@ -16,10 +16,10 @@ type ErrorResponse struct {
 }
 
 type Worker struct { //for teh heartbeat
-	ID     string
-	Job_id string
+	ID     string `json:"id"`
+	Job_id string `json:"job_id"`
 	//Last_ping time.Time
-	Last_ping int64
+	Last_ping int64 `json:"last_ping"`
 }
 
 type Heartbeat struct {

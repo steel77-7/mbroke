@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/mbroke/types"
-	"github.com/redis/go-redis/v9"
 )
 
 type work_map struct {
@@ -21,24 +20,18 @@ func Check_hearbeat() {
 	log.SetFlags(0)
 	for {
 		for key, value := range Worker_map.List {
-			if time.Now().UTC().UnixMilli()-value.Last_ping > 10000 {
-				res, err := Redis.XPending(CTX, &redis.XPendingExtArgs{
-					Stream: "ingest:primary",
-					Group:  "primary",
-					Start:  "-",
-					End:    "+",
-					Count:  10,
-				}).Result()
-
+			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
+				//worker id mismatch issue
+				res, err := Redis.XRange(CTX, value.Job_id, value.Job_id, 1)
 				if err != nil {
-					log.Print("in the check heartbeat utils" + err)
+					log.Print("Job not coulnt not be fetched")
 					continue
 				}
+				if len(res) != 0
+					Retry_sorter <- Worker_map.List[key]
 
-				Retry_channel <- Worker_map.List[key]
 				delete(Worker_map.List, key)
 
-				//implement logic for
 			}
 		}
 	}

@@ -31,4 +31,6 @@ var Ingest_channel = make(chan types.Job, 1000)
 
 var Worker_channel = make(chan types.Job, 1000)
 
+var Retry_sorter = make(chan types.Job, 1000)
+
 var Retry_channel = make(chan *types.Worker, 1000)

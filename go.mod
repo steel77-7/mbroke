@@ -6,6 +6,7 @@ toolchain go1.24.11
 
 require (
 	github.com/gin-gonic/gin v1.11.0
+	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.17.2
 )
 

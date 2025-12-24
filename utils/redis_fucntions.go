@@ -59,68 +59,14 @@ func Feed_to_broker() {
 	}
 }
 
-// func Retry() {
-// 	// constantly
-// 	for {
-// 		pendingInfo, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
-// 			Stream: "ingest:primary",
-// 			Group:  "primary",
-// 			Start:  "-",
-// 			End:    "+",
-// 			Count:  10,
-// 		}).Result()
-// 		if err != nil {
-// 			log.Print("Error in fetching the peding list in retry")
-// 			continue
-// 		}
-// 		for _, p := range pendingInfo {
-// 			if p.RetryCount > 5 {
-// 				//implement the dead end queue logic here
-// 				tbs, _ := Redis.XRange(CTX, "ingest:primary", p.ID, p.ID).Result()
-// 				if err != nil {
-// 					log.Print("Document could not be fetched")
-// 					continue
-// 				}
-// 				_, err := Redis.XAdd(CTX, &redis.XAddArgs{
-// 					Stream: "ingest:dead_end",
-// 					Values: tbs.Values,
-// 					MaxLen: 10000,
-// 				}).Result()
-// 				if err != nil {
-// 					log.Print("Document could not be fetched")
-// 					continue
-// 				}
-// 			}
-// 			_, err := Redis.XRange(CTX, "ingest:primary", p.ID, p.ID).Result()
-// 			if err != nil {
-// 				log.Print("Document could not be fetched")
-// 				continue
-// 			}
-
-// 			claim, err := Redis.XClaim(CTX, &redis.XClaimArgs{
-// 				Stream:   "ingest:primary",
-// 				Group:    "primary",
-// 				Consumer: uuid.New(),
-// 				Messages: []string{p.ID},
-// 			}).Result()
-
-// 			if err != nil {
-// 				log.Print("Could not add the")
-// 				continue
-// 			}
-// 			if len(claim) > 0 {
-// 				Worker_channel <- claim[0].Values
-// 			}
-
-// 		}
-// 	}
-// }
-//
-//
-
 // slow down
+// this function will cause redundancy or infinte repeats | all will be dead letter queued if filtering is not used
 func Retry() {
 	for {
+		// set := make(map[]string struct{})
+		// for value := range Retry_channel{
+		// 	set[value]
+		// }
 		job := <-Retry_channel
 		pending, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
 			Stream: "ingest-primary",
@@ -145,6 +91,7 @@ func Retry() {
 				continue
 			}
 		}
+
 		_, err2 := Redis.XClaim(CTX, &redis.XClaimArgs{
 			Stream:   "ingest:primary",
 			Group:    "primary",
@@ -156,5 +103,13 @@ func Retry() {
 			log.Print("Couldn'nt claim the job while retrying")
 			continue
 		}
+	}
+}
+
+func Retry_filter() {
+	//filter the retry channel so that no duplication occurs
+	set := make(map[string]struct{})
+	for {
+		set[<-Retry_sorter] = struct{}{}
 	}
 }
