@@ -11,7 +11,7 @@ import (
 
 type work_map struct {
 	mu   sync.Mutex
-	list map[string]*types.Worker
+	List map[string]*types.Worker
 }
 
 var Worker_map work_map
@@ -20,7 +20,7 @@ func Check_hearbeat() {
 	log.SetPrefix("[Error in heartbeat]: ")
 	log.SetFlags(0)
 	for {
-		for key, value := range Worker_map.list {
+		for key, value := range Worker_map.List {
 			if time.Now().UTC().UnixMilli()-value.Last_ping > 10000 {
 				res, err := Redis.XPending(CTX, &redis.XPendingExtArgs{
 					Stream: "ingest:primary",
@@ -29,17 +29,16 @@ func Check_hearbeat() {
 					End:    "+",
 					Count:  10,
 				}).Result()
-				if res.RetryCount > 5 {
 
-				}
 				if err != nil {
 					log.Print("in the check heartbeat utils" + err)
 					continue
 				}
 
-				Retry_channel <- delete(Worker_map.list, key)
+				Retry_channel <- Worker_map.List[key]
+				delete(Worker_map.List, key)
 
-				//implement logic for res[ushing the request]
+				//implement logic for
 			}
 		}
 	}

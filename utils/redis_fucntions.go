@@ -59,59 +59,102 @@ func Feed_to_broker() {
 	}
 }
 
+// func Retry() {
+// 	// constantly
+// 	for {
+// 		pendingInfo, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
+// 			Stream: "ingest:primary",
+// 			Group:  "primary",
+// 			Start:  "-",
+// 			End:    "+",
+// 			Count:  10,
+// 		}).Result()
+// 		if err != nil {
+// 			log.Print("Error in fetching the peding list in retry")
+// 			continue
+// 		}
+// 		for _, p := range pendingInfo {
+// 			if p.RetryCount > 5 {
+// 				//implement the dead end queue logic here
+// 				tbs, _ := Redis.XRange(CTX, "ingest:primary", p.ID, p.ID).Result()
+// 				if err != nil {
+// 					log.Print("Document could not be fetched")
+// 					continue
+// 				}
+// 				_, err := Redis.XAdd(CTX, &redis.XAddArgs{
+// 					Stream: "ingest:dead_end",
+// 					Values: tbs.Values,
+// 					MaxLen: 10000,
+// 				}).Result()
+// 				if err != nil {
+// 					log.Print("Document could not be fetched")
+// 					continue
+// 				}
+// 			}
+// 			_, err := Redis.XRange(CTX, "ingest:primary", p.ID, p.ID).Result()
+// 			if err != nil {
+// 				log.Print("Document could not be fetched")
+// 				continue
+// 			}
+
+// 			claim, err := Redis.XClaim(CTX, &redis.XClaimArgs{
+// 				Stream:   "ingest:primary",
+// 				Group:    "primary",
+// 				Consumer: uuid.New(),
+// 				Messages: []string{p.ID},
+// 			}).Result()
+
+// 			if err != nil {
+// 				log.Print("Could not add the")
+// 				continue
+// 			}
+// 			if len(claim) > 0 {
+// 				Worker_channel <- claim[0].Values
+// 			}
+
+// 		}
+// 	}
+// }
+//
+//
+
+// slow down
 func Retry() {
-	// constantly
 	for {
-		pendingInfo, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
-			Stream: "ingest:primary",
+		job := <-Retry_channel
+		pending, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
+			Stream: "ingest-primary",
 			Group:  "primary",
-			Start:  "-",
-			End:    "+",
-			Count:  10,
+			Start:  job.Job_id,
+			End:    job.Job_id,
+			Count:  1,
 		}).Result()
 		if err != nil {
-			log.Print("Error in fetching the peding list in retry")
+			log.Print("Couldn'nt fetch the info for the pending job")
 			continue
 		}
-		for _, p := range pendingInfo {
-			if p.RetryCount > 5 {
-				//implement the dead end queue logic here
-				tbs, _ := Redis.XRange(CTX, "ingest:primary", p.ID, p.ID).Result()
-				if err != nil {
-					log.Print("Document could not be fetched")
-					continue
-				}
-				_, err := Redis.XAdd(CTX, &redis.XAddArgs{
-					Stream: "ingest:dead_end",
-					Values: tbs.Values,
-					MaxLen: 10000,
-				}).Result()
-				if err != nil {
-					log.Print("Document could not be fetched")
-					continue
-				}
-			}
-			res, err := Redis.XRange(CTX, "ingest:primary", p.ID, p.ID).Result()
-			if err != nil {
-				log.Print("Document could not be fetched")
-				continue
-			}
-
-			claim, err := Redis.XClaim(CTX, &redis.XClaimArgs{
-				Stream:   "ingest:primary",
-				Group:    "primary",
-				Consumer: uuid.New(),
-				Messages: []string{p.ID},
+		//checking for dead end
+		if pending.RetryCount > 5 {
+			_, err := Redis.XAdd(CTX, &redis.XAddArgs{
+				Stream: "ingest:dead_end",
+				Values: pending.Values,
+				MaxLen: 10000,
 			}).Result()
-
 			if err != nil {
-				log.Print("Could not add the")
+				log.Print("Couldn'nt add the job to the dead letter queue")
 				continue
 			}
-			if len(claim) > 0 {
-				Worker_channel <- claim[0].Values
-			}
+		}
+		_, err2 := Redis.XClaim(CTX, &redis.XClaimArgs{
+			Stream:   "ingest:primary",
+			Group:    "primary",
+			Consumer: uuid.New(),
+			Messages: []string{job.Job_id},
+		}).Result()
 
+		if err2 != nil {
+			log.Print("Couldn'nt claim the job while retrying")
+			continue
 		}
 	}
 }
