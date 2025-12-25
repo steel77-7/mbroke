@@ -14,7 +14,7 @@ func Ingest(c *gin.Context) {
 		log.Fatal("Couldn't bind the json")
 		c.JSON(500 ,c.H{
 			"message":"Couldn't bidn the json: "+err,
-			"code":500
+			"code":500,
 		})
 		return
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 type work_map struct {
-	mu   sync.Mutex
+	Mu   sync.Mutex
 	List map[string]*types.Worker
 }
 
@@ -28,7 +28,7 @@ func Check_hearbeat() {
 					continue
 				}
 				if len(res) != 0
-					Retry_sorter <- Worker_map.List[key]
+				Retry_channel <- Worker_map.List[key]
 
 				delete(Worker_map.List, key)
 
