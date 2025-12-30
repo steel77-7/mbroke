@@ -9,7 +9,7 @@ import (
 	"github.com/mbroke/utils"
 )
 
-func heartbeat(c *gin.Context) {
+func Heartbeat(c *gin.Context) {
 	var heartbeat types.Heartbeat
 	if err := c.ShouldBind(&heartbeat); err != nil {
 		c.JSON(500, gin.H{
