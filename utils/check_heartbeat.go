@@ -16,13 +16,14 @@ var Worker_map work_map = work_map{
 	List: make(map[string]*types.Worker),
 }
 
-func Check_hearbeat() {
-	log.SetPrefix("[Error in heartbeat]: ")
-	log.SetFlags(0)
+func Check_heartbeat() {
 	for {
-		log.Print("Workermap .leng:", len(Worker_map.List))
-		log.Print("WorkerChannel .leng:", len(Worker_channel))
-
+		//log.Print("Workermap .leng:", len(Worker_map.List))
+		//log.Print("WorkerChannel .leng:", len(Worker_channel))
+		if len(Worker_map.List) == 0 {
+			continue
+		}
+		log.Print("lub dub")
 		for key, value := range Worker_map.List {
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
 				//worker id mismatch issue
@@ -36,7 +37,7 @@ func Check_hearbeat() {
 				}
 
 				delete(Worker_map.List, key)
-
+				time.Sleep(time.Duration(1) * time.Second)
 			}
 		}
 	}

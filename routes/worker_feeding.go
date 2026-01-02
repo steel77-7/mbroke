@@ -1,14 +1,12 @@
 package routes
 
 import (
-	"io"
 	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mbroke/types"
 	"github.com/mbroke/utils"
-	"github.com/redis/go-redis/v9"
 )
 
 type worker_info struct {
@@ -18,13 +16,7 @@ type worker_info struct {
 func Worker_feeding(c *gin.Context) {
 	//	tbs, _ = string(json.Marshal(job))
 	var req_bytes worker_info
-	jsonData, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.AbortWithStatus(400)
-		return
-	}
-	log.Println("Joined worker", string(jsonData))
-	if err := c.ShouldBind(&req_bytes); err != nil {
+	if err := c.ShouldBindJSON(&req_bytes); err != nil {
 		log.Print("Couldn't get the worker id in the [Worker feeding")
 		c.JSON(500, gin.H{
 			"message": "No id provided",
@@ -33,46 +25,8 @@ func Worker_feeding(c *gin.Context) {
 		})
 		return
 	}
-	//	job.Worker = req_bytes.ID
 
-	var job types.Job
-	if len(utils.Worker_channel) > 0 {
-
-		job = <-utils.Worker_channel
-	}
-
-	check, _ := utils.Redis.XRange(utils.CTX, "ingest:primary", job.ID, job.ID).Result()
-
-	if len(check) != 0 {
-		_, err := utils.Redis.XClaim(utils.CTX, &redis.XClaimArgs{
-			Stream:   "ingest:primary",
-			Group:    "primary",
-			Consumer: req_bytes.ID,
-			Messages: []string{job.ID},
-		}).Result()
-		if err != nil {
-			c.JSON(500, gin.H{
-				"message": "Job not retrieved",
-			})
-			log.Fatal("Couldnt claim the job in Worker feeding")
-		}
-	}
-	// } else {
-	// 	args := &redis.XAddArgs{
-	// 		Stream: "ingest:primary",
-	// 		// Group:    "primary",
-	// 		// Consumer: req_bytes.ID,
-	// 		MaxLen: 20000,
-	// 		Values: job,
-	// 	}
-	// 	_, err := utils.Redis.XAdd(utils.CTX, args).Result()
-	// 	if err != nil {
-	// 		c.JSON(500, gin.H{
-	// 			"message": "Job not added",
-	// 		})
-	// 		log.Fatal("Couldnt add the job in Worker feeding", err)
-	// 	}
-	// }
+	job := utils.Feed_to_worker(req_bytes.ID)
 
 	// issue here : the job and worker id issue
 	utils.Worker_map.List[req_bytes.ID] = &types.Worker{
@@ -81,9 +35,9 @@ func Worker_feeding(c *gin.Context) {
 		Last_ping: time.Now().UTC().UnixMilli(),
 	}
 	//utils.Feed()
-	log.Print(job.Data)
+	log.Print(len(utils.Worker_map.List))
 	c.JSON(200, gin.H{
 		"message": "Job retrieved",
-		"data":    job.Data,
+		"data":    job.Values["data"],
 	})
 }

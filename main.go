@@ -19,8 +19,7 @@ func main() {
 	router.POST("/heartbeat", routes.Heartbeat)
 	router.POST("/ack", routes.Ack)
 	utils.Redis_init()
-	go utils.Feed()
-	go utils.Feed_to_broker()
+	//go utils.Check_heartbeat()
 	go utils.Retry()
 
 	router.Run("localhost:8000")

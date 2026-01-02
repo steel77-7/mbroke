@@ -26,12 +26,24 @@ func Ack(c *gin.Context) {
 		)
 		log.Fatal("Couldnt parse the request")
 	}
-	if !req.Status {
-		delete(utils.Worker_map.List, req.ID)
+	if !req.Status { //retry here
 		c.JSON(200, gin.H{
-			"message": "NACK sent",
+			"message": "NACK recieved",
 		})
-		return
+	} else {
+		worker := utils.Worker_map.List[req.ID]
+		err := utils.ACK(worker.Job_id)
+		if err {
+			c.JSON(500,
+				gin.H{
+					"message": "messafe couldnt be acked",
+				})
+			log.Fatal("COuldnt be acked: ", req.ID)
+		}
+		c.JSON(200, gin.H{
+			"message": "ACK recieved",
+		})
 	}
+	delete(utils.Worker_map.List, req.ID)
 
 }
