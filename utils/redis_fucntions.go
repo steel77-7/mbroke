@@ -67,6 +67,21 @@ func ACK(id string) bool {
 
 	return false
 }
+
+// func DACK(job_id string , worker_id string){
+// 	val , ok := Worker_map.List[worker_id]
+// 	if !ok{
+// 		//retrun somethign negative or the worker might have not joined again as well
+
+// 	}
+// 	if val.Job_id ==job_id{
+// 		Redis.XClaim(CTX,&redis.XClaimArgs{
+// 			Stream: stream,
+// 			Consumer:
+// 		})
+// 	}
+
+// }
 func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker feeding
 	log.Print("Worker id: ", id)
 	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
@@ -81,8 +96,8 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 		//check if worker is alive or not
 
 		for _, p := range to_claim {
-			_, ok := Worker_map.List[p.Consumer]
-			if !ok {
+			val, ok := Worker_map.List[p.Consumer]
+			if (!ok) || (ok && val.Job_id != p.ID) {
 				log.Print("Pending job")
 				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
 					Stream:   stream,
@@ -125,41 +140,46 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 
 // slow down
 // this function will cause redundancy or infinte repeats | all will be dead letter queued if filtering is not used
-func Retry() {
-	for {
-		job := <-Retry_channel
-		pending, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
-			Stream: "ingest-primary",
-			Group:  "primary",
-			Start:  job.Job_id,
-			End:    job.Job_id,
-			Count:  1,
-		}).Result()
-		if err != nil {
-			log.Print("Couldn'nt fetch the info for the pending job")
-			continue
-		}
-		res, err := Redis.XRange(CTX, "ingest:primary", pending[0].ID, pending[0].ID).Result()
-		if err != nil {
-			log.Print("couldnt not fetch the prev job")
-			continue
-		}
-		//checking for dead end
-		if pending[0].RetryCount > 5 {
-			_, err := Redis.XAdd(CTX, &redis.XAddArgs{
-				Stream: "ingest:dead_end",
-				Values: res[0].Values,
-				MaxLen: 10000,
-			}).Result()
-			if err != nil {
-				log.Print("Couldn'nt add the job to the dead letter queue")
-				continue
-			}
-		}
+// func Retry() {
+// 	for {
+// 		job := <-Retry_channel
+// 		pending, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
+// 			Stream: "ingest-primary",
+// 			Group:  "primary",
+// 			Start:  job.Job_id,
+// 			End:    job.Job_id,
+// 			Count:  1,
+// 		}).Result()
+// 		if err != nil {
+// 			log.Print("Couldn'nt fetch the info for the pending job")
+// 			continue
+// 		}
+// 		res, err := Redis.XRange(CTX, "ingest:primary", pending[0].ID, pending[0].ID).Result()
+// 		if err != nil {
+// 			log.Print("couldnt not fetch the prev job")
+// 			continue
+// 		}
+// 		//checking for dead end
+// 		if pending[0].RetryCount > 5 {
+// 			_, err := Redis.XAdd(CTX, &redis.XAddArgs{
+// 				Stream: "ingest:dead_end",
+// 				Values: res[0].Values,
+// 				MaxLen: 10000,
+// 			}).Result()
+// 			if err != nil {
+// 				log.Print("Couldn'nt add the job to the dead letter queue")
+// 				continue
+// 			}
+// 		}
 
-		Worker_channel <- types.Job{
-			ID:   res[0].Values["id"].(string),
-			Data: res[0].Values["data"].(string),
-		}
-	}
+// 		Worker_channel <- types.Job{
+// 			ID:   res[0].Values["id"].(string),
+// 			Data: res[0].Values["data"].(string),
+// 		}
+// 	}
+// }
+//
+
+func Retry() {
+
 }
