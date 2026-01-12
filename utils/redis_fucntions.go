@@ -10,8 +10,6 @@ import (
 var stream string = "ingest:primary"
 
 func Feed(job types.Job) { //this will be in the ingest
-	//var job types.Job
-	//	job = <-Ingest_channel
 	tbs := map[string]interface{}{
 		"id":   job.ID,
 		"data": job.Data,
@@ -28,60 +26,16 @@ func Feed(job types.Job) { //this will be in the ingest
 	log.Print("Job added")
 }
 
-// func Feed_to_broker() { //this will be in the worker feeding
-
-// 	//var job types.Job
-// 	for {
-// 		args := &redis.XReadGroupArgs{
-// 			Streams:  []string{stream, ">"},
-// 			Group:    "primary",
-// 			Consumer: "",
-// 			Count:    100,
-// 		}
-// 		res, err := Redis.XReadGroup(CTX, args).Result()
-// 		if err != nil {
-// 			log.Print("Coudn't read values from redis [Feed to the broker]:%v ", err)
-// 			continue
-// 		}
-
-// 		for _, xStream := range res {
-// 			for _, msg := range xStream.Messages {
-
-//					job := types.Job{
-//						ID:   msg.Values["id"].(string),
-//						Data: msg.Values["data"].(string),
-//					}
-//					Worker_channel <- job
-//				}
-//			}
-//		}
-//	}
-//
-
 func ACK(id string) bool {
+	log.Print("ACKINg the job")
 	if err := Redis.XAck(CTX, stream, "primary", id).Err(); err != nil {
 		if err := Redis.XDel(CTX, stream, id); err != nil {
 			return true
 		}
 	}
-
 	return false
 }
 
-// func DACK(job_id string , worker_id string){
-// 	val , ok := Worker_map.List[worker_id]
-// 	if !ok{
-// 		//retrun somethign negative or the worker might have not joined again as well
-
-// 	}
-// 	if val.Job_id ==job_id{
-// 		Redis.XClaim(CTX,&redis.XClaimArgs{
-// 			Stream: stream,
-// 			Consumer:
-// 		})
-// 	}
-
-// }
 func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker feeding
 	log.Print("Worker id: ", id)
 	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
@@ -94,9 +48,11 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 	}).Result()
 	if err == nil && len(to_claim) > 0 {
 		//check if worker is alive or not
-
 		for _, p := range to_claim {
+			Worker_map.Mu.Lock()
 			val, ok := Worker_map.List[p.Consumer]
+			Worker_map.Mu.Unlock()
+
 			if (!ok) || (ok && val.Job_id != p.ID) {
 				log.Print("Pending job")
 				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
@@ -126,60 +82,14 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 		Consumer: id,
 		Count:    1,
 	}
-	res, err := Redis.XReadGroup(CTX, args).Result()
-	if err != nil {
-		log.Print("Coudn't read values from redis [Feed to the broker]:%v ", err)
+	res, err1 := Redis.XReadGroup(CTX, args).Result()
+	if err1 != nil {
+		log.Print("Coudn't read values from redis [Feed to the broker]: ", err)
 		log.Fatal("crased in feed to worker")
 	}
-	if err != nil || len(res) == 0 || len(res[0].Messages) == 0 {
+	if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
 		return nil
 	}
-	log.Print("NEw job")
+	log.Print("New job")
 	return &res[0].Messages[0]
-}
-
-// slow down
-// this function will cause redundancy or infinte repeats | all will be dead letter queued if filtering is not used
-// func Retry() {
-// 	for {
-// 		job := <-Retry_channel
-// 		pending, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
-// 			Stream: "ingest-primary",
-// 			Group:  "primary",
-// 			Start:  job.Job_id,
-// 			End:    job.Job_id,
-// 			Count:  1,
-// 		}).Result()
-// 		if err != nil {
-// 			log.Print("Couldn'nt fetch the info for the pending job")
-// 			continue
-// 		}
-// 		res, err := Redis.XRange(CTX, "ingest:primary", pending[0].ID, pending[0].ID).Result()
-// 		if err != nil {
-// 			log.Print("couldnt not fetch the prev job")
-// 			continue
-// 		}
-// 		//checking for dead end
-// 		if pending[0].RetryCount > 5 {
-// 			_, err := Redis.XAdd(CTX, &redis.XAddArgs{
-// 				Stream: "ingest:dead_end",
-// 				Values: res[0].Values,
-// 				MaxLen: 10000,
-// 			}).Result()
-// 			if err != nil {
-// 				log.Print("Couldn'nt add the job to the dead letter queue")
-// 				continue
-// 			}
-// 		}
-
-// 		Worker_channel <- types.Job{
-// 			ID:   res[0].Values["id"].(string),
-// 			Data: res[0].Values["data"].(string),
-// 		}
-// 	}
-// }
-//
-
-func Retry() {
-
 }

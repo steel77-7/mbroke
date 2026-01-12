@@ -19,5 +19,5 @@ type Worker struct { //for teh heartbeat
 }
 
 type Heartbeat struct {
-	ID string `json:"is"`
+	ID string `json:"id"`
 }

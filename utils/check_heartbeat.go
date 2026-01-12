@@ -2,43 +2,42 @@ package utils
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/mbroke/types"
 )
 
 type work_map struct {
-	//	Mu   sync.Mutex
+	Mu   *sync.RWMutex
 	List map[string]*types.Worker
 }
 
 var Worker_map work_map = work_map{
+	Mu:   &sync.RWMutex{},
 	List: make(map[string]*types.Worker),
 }
 
 func Check_heartbeat() {
 	for {
-		//log.Print("Workermap .leng:", len(Worker_map.List))
-		//log.Print("WorkerChannel .leng:", len(Worker_channel))
+		time.Sleep(time.Duration(1) * time.Second)
+
+		log.Print("[INTHE CHECKHEARTBEAT ] ")
+
+		//i have to make it retry
 		if len(Worker_map.List) == 0 {
 			continue
 		}
-		log.Print("lub dub")
+		//log.Print("lub dub")
+		Worker_map.Mu.Lock()
 		for key, value := range Worker_map.List {
+			log.Print("[INTHE CHECKHEARTBEAT :]  : ", key)
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
-				//worker id mismatch issue
-				res, err := Redis.XRange(CTX, "ingest_primary", value.Job_id, value.Job_id).Result()
-				if err != nil {
-					log.Print("Job not coulnt not be fetched")
-					continue
-				}
-				if len(res) != 0 {
-					Retry_channel <- Worker_map.List[key]
-				}
-
+				//this will automatically label it as a workerless job and then it will eventually be executed
 				delete(Worker_map.List, key)
-				time.Sleep(time.Duration(1) * time.Second)
+
 			}
 		}
+		Worker_map.Mu.Unlock()
 	}
 }

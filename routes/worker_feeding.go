@@ -29,11 +29,14 @@ func Worker_feeding(c *gin.Context) {
 	job := utils.Feed_to_worker(req_bytes.ID)
 
 	// issue here : the job and worker id issue
+	utils.Worker_map.Mu.Lock()
 	utils.Worker_map.List[req_bytes.ID] = &types.Worker{
 		ID:        req_bytes.ID,
 		Job_id:    job.ID,
 		Last_ping: time.Now().UTC().UnixMilli(),
 	}
+	utils.Worker_map.Mu.Unlock()
+
 	//utils.Feed()
 	log.Print(len(utils.Worker_map.List))
 	c.JSON(200, gin.H{

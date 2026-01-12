@@ -11,12 +11,13 @@ import (
 
 func Heartbeat(c *gin.Context) {
 	var heartbeat types.Heartbeat
-	if err := c.ShouldBind(&heartbeat); err != nil {
+	if err := c.ShouldBindJSON(&heartbeat); err != nil {
 		c.JSON(500, gin.H{
 			"message": "Couldn't bind the result",
 		})
 		return
 	}
+	log.Print("[ID IN HEARTBEAT ]: ", heartbeat.ID)
 	//faulty go but written as psuedo code
 	val, ok := utils.Worker_map.List[heartbeat.ID]
 	if !ok {

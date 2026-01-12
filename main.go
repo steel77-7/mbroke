@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
+	go utils.Check_heartbeat()
 	router := gin.Default()
-	//	router.GET("/", home)
 	router.GET("/", func(c *gin.Context) {
 		c.IndentedJSON(http.StatusOK, res{Msg: "helooooo beitch"})
 	})
@@ -19,8 +19,6 @@ func main() {
 	router.POST("/heartbeat", routes.Heartbeat)
 	router.POST("/ack", routes.Ack)
 	utils.Redis_init()
-	//go utils.Check_heartbeat()
-	go utils.Retry()
 
 	router.Run("localhost:8000")
 }
