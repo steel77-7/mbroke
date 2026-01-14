@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"log"
 	"sync"
 	"time"
 
@@ -22,8 +21,6 @@ func Check_heartbeat() {
 	for {
 		time.Sleep(time.Duration(1) * time.Second)
 
-		log.Print("[INTHE CHECKHEARTBEAT ] ")
-
 		//i have to make it retry
 		if len(Worker_map.List) == 0 {
 			continue
@@ -31,7 +28,6 @@ func Check_heartbeat() {
 		//log.Print("lub dub")
 		Worker_map.Mu.Lock()
 		for key, value := range Worker_map.List {
-			log.Print("[INTHE CHECKHEARTBEAT :]  : ", key)
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
 				//this will automatically label it as a workerless job and then it will eventually be executed
 				delete(Worker_map.List, key)

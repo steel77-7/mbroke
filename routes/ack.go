@@ -13,6 +13,8 @@ type Ack_request struct {
 }
 
 func Ack(c *gin.Context) {
+	defer c.Request.Body.Close()
+
 	var req Ack_request
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(
@@ -21,7 +23,8 @@ func Ack(c *gin.Context) {
 				"message": "Couldnt parse the message",
 			},
 		)
-		log.Fatal("Couldnt parse the request")
+		log.Print("Couldnt parse the request")
+		return
 	}
 	log.Print("1", req.ACK)
 	if !req.ACK {
@@ -31,19 +34,22 @@ func Ack(c *gin.Context) {
 		})
 	} else {
 		log.Print("3")
-
+		utils.Worker_map.Mu.Lock()
 		worker := utils.Worker_map.List[req.ID]
+		utils.Worker_map.Mu.Unlock()
+
 		err := utils.ACK(worker.Job_id)
 		if err {
 			c.JSON(500,
 				gin.H{
 					"message": "messafe couldnt be acked",
 				})
-			log.Fatal("COuldnt be acked: ", req.ID)
+			log.Print("COuldnt be acked: ", req.ID)
 		}
 		c.JSON(200, gin.H{
 			"message": "ACK recieved",
 		})
+		return
 	}
 	utils.Worker_map.Mu.Lock()
 	delete(utils.Worker_map.List, req.ID)

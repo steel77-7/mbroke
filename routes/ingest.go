@@ -15,13 +15,14 @@ type job_req struct {
 }
 
 func Ingest(c *gin.Context) {
+	defer c.Request.Body.Close()
 	job := types.Job{}
 	req := job_req{}
 	//	raw, _ := c.GetRawData()
 	//	log.Print("Raw :::::::::::", string(raw))
 	log.Print("INGEST{{{{{{{}}}}}}}")
 	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Fatal("Couldn't bind the json: ", err)
+		log.Print("Couldn't bind the json: ", err)
 		c.JSON(500, gin.H{
 			"message": "Couldn't bidn the json: ",
 			"code":    500,

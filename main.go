@@ -1,7 +1,9 @@
 package main
 
 import (
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mbroke/routes"
@@ -19,8 +21,17 @@ func main() {
 	router.POST("/heartbeat", routes.Heartbeat)
 	router.POST("/ack", routes.Ack)
 	utils.Redis_init()
+	server := &http.Server{
+		Addr:           ":8000",
+		Handler:        router,
+		ReadTimeout:    5 * time.Second,
+		WriteTimeout:   5 * time.Second,
+		IdleTimeout:    15 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
 
-	router.Run("localhost:8000")
+	log.Fatal(server.ListenAndServe())
+	// router.Run("localhost:8000")
 }
 
 type res struct {

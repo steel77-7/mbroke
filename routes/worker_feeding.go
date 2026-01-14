@@ -14,7 +14,8 @@ type worker_info struct {
 }
 
 func Worker_feeding(c *gin.Context) {
-	//	tbs, _ = string(json.Marshal(job))
+	defer c.Request.Body.Close()
+	// tbs, _ = string(json.Marshal(job))
 	var req_bytes worker_info
 	if err := c.ShouldBindJSON(&req_bytes); err != nil {
 		log.Print("Couldn't get the worker id in the [Worker feeding")
@@ -25,9 +26,7 @@ func Worker_feeding(c *gin.Context) {
 		})
 		return
 	}
-
 	job := utils.Feed_to_worker(req_bytes.ID)
-
 	// issue here : the job and worker id issue
 	utils.Worker_map.Mu.Lock()
 	utils.Worker_map.List[req_bytes.ID] = &types.Worker{

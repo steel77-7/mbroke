@@ -10,6 +10,7 @@ import (
 )
 
 func Heartbeat(c *gin.Context) {
+	defer c.Request.Body.Close()
 	var heartbeat types.Heartbeat
 	if err := c.ShouldBindJSON(&heartbeat); err != nil {
 		c.JSON(500, gin.H{
