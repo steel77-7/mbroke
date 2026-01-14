@@ -18,7 +18,6 @@ func Heartbeat(c *gin.Context) {
 		})
 		return
 	}
-	log.Print("[ID IN HEARTBEAT ]: ", heartbeat.ID)
 	//faulty go but written as psuedo code
 	val, ok := utils.Worker_map.List[heartbeat.ID]
 	if !ok {

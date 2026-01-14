@@ -17,6 +17,7 @@ var Worker_map work_map = work_map{
 	List: make(map[string]*types.Worker),
 }
 
+// not checked yet
 func Check_heartbeat() {
 	for {
 		time.Sleep(time.Duration(1) * time.Second)

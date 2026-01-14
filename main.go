@@ -12,7 +12,10 @@ import (
 
 func main() {
 	go utils.Check_heartbeat()
-	router := gin.Default()
+	go utils.Acker()
+	//	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.Use(gin.Recovery())
 	router.GET("/", func(c *gin.Context) {
 		c.IndentedJSON(http.StatusOK, res{Msg: "helooooo beitch"})
 	})
@@ -26,10 +29,10 @@ func main() {
 		Handler:        router,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   5 * time.Second,
-		IdleTimeout:    15 * time.Second,
+		IdleTimeout:    10 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-
+	log.Print("Sever runnign")
 	log.Fatal(server.ListenAndServe())
 	// router.Run("localhost:8000")
 }

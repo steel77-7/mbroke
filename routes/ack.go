@@ -26,26 +26,24 @@ func Ack(c *gin.Context) {
 		log.Print("Couldnt parse the request")
 		return
 	}
-	log.Print("1", req.ACK)
 	if !req.ACK {
-		log.Print("2")
 		c.JSON(200, gin.H{
 			"message": "NACK recieved",
 		})
 	} else {
-		log.Print("3")
 		utils.Worker_map.Mu.Lock()
 		worker := utils.Worker_map.List[req.ID]
 		utils.Worker_map.Mu.Unlock()
 
-		err := utils.ACK(worker.Job_id)
-		if err {
-			c.JSON(500,
-				gin.H{
-					"message": "messafe couldnt be acked",
-				})
-			log.Print("COuldnt be acked: ", req.ID)
-		}
+		//err := utils.ACK(worker.Job_id)
+		utils.ACK_channel <- worker.Job_id
+		// if err {
+		// 	c.JSON(500,
+		// 		gin.H{
+		// 			"message": "messafe couldnt be acked",
+		// 		})
+		// 	log.Print("COuldnt be acked: ", req.ID)
+		// }
 		c.JSON(200, gin.H{
 			"message": "ACK recieved",
 		})
