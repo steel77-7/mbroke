@@ -7,11 +7,6 @@ import (
 	"github.com/mbroke/types"
 )
 
-type work_map struct {
-	Mu   *sync.RWMutex
-	List map[string]*types.Worker
-}
-
 var Worker_map work_map = work_map{
 	Mu:   &sync.RWMutex{},
 	List: make(map[string]*types.Worker),
