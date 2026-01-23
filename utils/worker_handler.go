@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -28,7 +27,9 @@ type Message struct {
 	length   uint32
 	msg_type byte
 	payload  []byte
-	//err      error
+	//	id       string
+	//
+	// err      error
 }
 
 type work_map struct {
@@ -42,21 +43,23 @@ type Client struct { //the workers
 	ready     bool
 	last_ping time.Time
 	auth      bool
+	mu        *sync.Mutex
 }
 
 type Server struct {
 	Addr     string
 	Listener net.Listener
 	quitch   chan struct{}
-	mu       sync.Mutex
+	mu       *sync.Mutex
 	clients  map[string]*Client
 }
 
 func NewServer(addr string) *Server {
+
 	return &Server{
 		Addr:    addr,
 		clients: make(map[string]*Client),
-		mu:      sync.Mutex{},
+		mu:      &sync.Mutex{},
 	}
 }
 
@@ -86,35 +89,111 @@ func (s *Server) accept_loop() {
 	}
 }
 
+// func (s *Server) read_loop(conn net.Conn) {
+// 	reader := bufio.NewReader(conn)
+// 	msg, err := reader.ReadString('\n')
+// 	if err != nil {
+// 		log.Print("COUldnt not read anything")
+// 		conn.Close()
+// 		return
+// 	}
+
+//		if Message_type(msg[0]) == CONNECT {
+//			s.clients[msg[1:len(msg)]] = &Client{
+//				conn:  conn,
+//				id:    msg[1:len(msg)],
+//				ready: true,
+//				mu:    s.mu,
+//			}
+//		}
+//		for {
+//			new_msg, err := reader.ReadString('\n')
+//			if err != nil {
+//				log.Print("faulyt message: ", err)
+//				continue
+//			}
+//			val, ok := s.clients[msg[1:len(msg)]]
+//			if ok {
+//				val.message_handler(new_msg)
+//			}
+//		}
+//	}
+func (s *Server) send(w io.Writer, kind byte, payload []byte) error {
+	length := uint32(1 + len(payload))
+	var header [5]byte
+	//	var w io.Writer = client.conn
+	binary.BigEndian.PutUint32(header[0:4], length)
+	header[4] = kind
+	if _, err := w.Write(header[:]); err != nil {
+		return err
+	}
+	if len(payload) > 0 {
+		_, err := w.Write(payload)
+		return err
+	}
+	return nil
+}
+
 func (s *Server) read_loop(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-	msg, err := reader.ReadString('\n')
-	if err != nil {
-		log.Print("COUldnt not read anything")
-		conn.Close()
+	var len_buf [4]byte
+	var r io.Reader
+	if _, err := io.ReadFull(conn, len_buf[:]); err != nil {
+		log.Print()
+		return
+	}
+	length := binary.BigEndian.Uint32(len_buf[:])
+	if length < 1 {
+		log.Print("Coudlnt establish connection [LENGTH IS 0] ")
 		return
 	}
 
-	if Message_type(msg[0]) == CONNECT {
-		s.clients[msg[1:len(msg)]] = &Client{
-			conn:  conn,
-			id:    msg[1:len(msg)],
-			ready: true,
-		}
+	type_buf := make([]byte, 1)
+	if _, err := io.ReadFull(conn, type_buf[:]); err != nil {
+		log.Print("couldnt read the type:", err)
+		return
 	}
+	if Message_type(type_buf[0]) != CONNECT {
+		log.Print("IDK TF IS WRONG HERE //// or someone malicious")
+		return
+	}
+	payload_len := int(length - 1)
+	payload := make([]byte, payload_len)
+	if _, err := io.ReadFull(conn, payload[:]); err != nil {
+		log.Print("couldnt read the payload:", err)
+		return
+	}
+	s.clients[string(payload)] = &Client{
+		conn:  conn,
+		id:    string(payload),
+		ready: true,
+		mu:    s.mu,
+	}
+
+	// if Message_type(msg[0]) == CONNECT {
+	// 	s.clients[msg[1:len(msg)]] = &Client{
+	// 		conn:  conn,
+	// 		id:    msg[1:len(msg)],
+	// 		ready: true,
+	// 		mu:    s.mu,
+	// 	}
+	// }
 	for {
-		new_msg, err := reader.ReadString('\n')
-		if err != nil {
-			log.Print("faulyt message: ", err)
-			continue
-		}
-		val, ok := s.clients[msg[1:len(msg)]]
+		// new_msg, err := reader.ReadString('\n')
+		// if err != nil {
+		// 	log.Print("faulyt message: ", err)
+		// 	continue
+		// }
+		// val, ok := s.clients[msg[1:len(msg)]]
+		// if ok {
+		// 	val.message_handler(new_msg)
+		// }
+		val, ok := s.clients[string(payload)]
 		if ok {
-			val.message_handler(new_msg)
+			val.message_handler()
 		}
+
 	}
 }
-
 func (client *Client) send(kind byte, payload []byte) error {
 	length := uint32(1 + len(payload))
 	var header [5]byte
@@ -133,7 +212,7 @@ func (client *Client) send(kind byte, payload []byte) error {
 func (client *Client) read_message() (msg Message, err error) {
 	var len_buf [4]byte
 	var r io.Reader
-
+	r = client.conn
 	if _, err := io.ReadFull(r, len_buf[:]); err != nil {
 		return Message{}, err
 	}
@@ -141,6 +220,7 @@ func (client *Client) read_message() (msg Message, err error) {
 	length := binary.BigEndian.Uint32(len_buf[:])
 	if length < 1 {
 		err = fmt.Errorf("invalid length")
+		return Message{}, err
 	}
 
 	msgTypeBuf := make([]byte, 1)
@@ -164,10 +244,13 @@ func (client *Client) read_message() (msg Message, err error) {
 
 }
 
-func (client *Client) message_handler(message string) {
-	id := message[0:32] //just for exmaple  rn
-
-	switch Message_type(message[0]) {
+func (client *Client) message_handler() {
+	msg, err := client.read_message()
+	if err != nil {
+		log.Print("couldnt parse the message")
+		return
+	}
+	switch Message_type(Message_type(msg.msg_type)) {
 	case CONNECT:
 		{
 			//auth function here
@@ -176,42 +259,43 @@ func (client *Client) message_handler(message string) {
 		}
 	case HEARTBEAT:
 		{
-			val, ok := Worker_map.List[id]
+			val, ok := Worker_map.List[client.id]
 			if !ok {
-				client.conn.Write([]byte(fmt.Sprintf("%d%d", HEARTBEAT, 0)))
+				client.send(byte(HEARTBEAT), []byte("0"))
 				break
 			}
 			val.Last_ping = time.Now().UTC().UnixMilli()
 		}
+
 	case TACK:
 		{
 			mess := "1"
-			if message[32:33] == "0" {
+			if string(msg.payload) == "0" {
 				mess = "0"
 			}
 			Worker_map.Mu.Lock()
-			worker, _ := Worker_map.List[id]
+			worker, _ := Worker_map.List[client.id]
 			Worker_map.Mu.Unlock()
 			ACK_channel <- worker.Job_id
-			client.send(Message_type(TACK), mess)
+			client.send(byte(TACK), []byte(mess))
 		}
 	case PULL:
 		{
-			job := Feed_to_worker(id)
+			job := Feed_to_worker(client.id)
 			Worker_map.Mu.Lock()
-			Worker_map.List[id] = &types.Worker{
-				ID:        id,
+			Worker_map.List[client.id] = &types.Worker{
+				ID:        client.id,
 				Job_id:    job.ID,
 				Last_ping: time.Now().UTC().UnixMilli(),
 			}
 			Worker_map.Mu.Unlock()
 			tbs, _ := json.Marshal(job.Values["data"])
-			client.send(PULL, string(tbs))
+			client.send(PULL, []byte(tbs))
 		}
 	default:
 		{
 			log.Print("Invalid messgae type")
-			client.send(INVALID, "0")
+			client.send(INVALID, []byte("0"))
 		}
 	}
 }
