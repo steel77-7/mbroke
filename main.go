@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	go utils.Check_heartbeat()
+	//	go utils.Check_heartbeat()
 	go utils.Acker()
 	//	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -20,9 +20,13 @@ func main() {
 		c.IndentedJSON(http.StatusOK, res{Msg: "helooooo beitch"})
 	})
 	router.POST("/ingest", routes.Ingest)
-	router.POST("/worker", routes.Worker_feeding)
-	router.POST("/heartbeat", routes.Heartbeat)
-	router.POST("/ack", routes.Ack)
+	// router.POST("/worker", routes.Worker_feeding)
+	// router.POST("/heartbeat", routes.Heartbeat)
+	// router.POST("/ack", routes.Ack)
+	go func() {
+		server := utils.NewServer("127.0.0.1:9000")
+		server.Start()
+	}()
 	utils.Redis_init()
 	server := &http.Server{
 		Addr:           ":8000",

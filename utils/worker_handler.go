@@ -70,6 +70,8 @@ func (s *Server) Start() error {
 		return err
 	}
 	defer ln.Close()
+	s.accept_loop()
+	s.check_heartbeat()
 	<-s.quitch
 	return nil
 }
@@ -82,42 +84,9 @@ func (s *Server) accept_loop() {
 			continue
 		}
 		go s.read_loop(conn)
-		//yaha pe auth hogi
-		//but abhi ke liye auth logic ke alava aur dekhte hai
-		//if a worker does not send connect for a very long time them disconnect them //checked via the ready ...if not ready for a very logn time then disconnect
-
 	}
 }
 
-// func (s *Server) read_loop(conn net.Conn) {
-// 	reader := bufio.NewReader(conn)
-// 	msg, err := reader.ReadString('\n')
-// 	if err != nil {
-// 		log.Print("COUldnt not read anything")
-// 		conn.Close()
-// 		return
-// 	}
-
-//		if Message_type(msg[0]) == CONNECT {
-//			s.clients[msg[1:len(msg)]] = &Client{
-//				conn:  conn,
-//				id:    msg[1:len(msg)],
-//				ready: true,
-//				mu:    s.mu,
-//			}
-//		}
-//		for {
-//			new_msg, err := reader.ReadString('\n')
-//			if err != nil {
-//				log.Print("faulyt message: ", err)
-//				continue
-//			}
-//			val, ok := s.clients[msg[1:len(msg)]]
-//			if ok {
-//				val.message_handler(new_msg)
-//			}
-//		}
-//	}
 func (s *Server) send(w io.Writer, kind byte, payload []byte) error {
 	length := uint32(1 + len(payload))
 	var header [5]byte
@@ -136,7 +105,7 @@ func (s *Server) send(w io.Writer, kind byte, payload []byte) error {
 
 func (s *Server) read_loop(conn net.Conn) {
 	var len_buf [4]byte
-	var r io.Reader
+	//	var r io.Reader
 	if _, err := io.ReadFull(conn, len_buf[:]); err != nil {
 		log.Print()
 		return
@@ -192,6 +161,25 @@ func (s *Server) read_loop(conn net.Conn) {
 			val.message_handler()
 		}
 
+	}
+}
+
+func (s *Server) check_heartbeat() {
+	for {
+		time.Sleep(time.Duration(1) * time.Second)
+
+		//i have to make it retry
+		if len(Worker_map.List) == 0 {
+			continue
+		}
+		//log.Print("lub dub")
+		Worker_map.Mu.Lock()
+		for key, value := range Worker_map.List {
+			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
+				delete(Worker_map.List, key)
+			}
+		}
+		Worker_map.Mu.Unlock()
 	}
 }
 func (client *Client) send(kind byte, payload []byte) error {
@@ -250,7 +238,7 @@ func (client *Client) message_handler() {
 		log.Print("couldnt parse the message")
 		return
 	}
-	switch Message_type(Message_type(msg.msg_type)) {
+	switch Message_type(msg.msg_type) {
 	case CONNECT:
 		{
 			//auth function here
