@@ -24,7 +24,7 @@ func main() {
 	// router.POST("/heartbeat", routes.Heartbeat)
 	// router.POST("/ack", routes.Ack)
 	go func() {
-		server := utils.NewServer("127.0.0.1:9000")
+		server := utils.NewServer(":9000")
 		server.Start()
 	}()
 	utils.Redis_init()

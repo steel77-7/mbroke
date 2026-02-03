@@ -27,9 +27,6 @@ type Message struct {
 	length   uint32
 	msg_type byte
 	payload  []byte
-	//	id       string
-	//
-	// err      error
 }
 
 type work_map struct {
@@ -44,6 +41,7 @@ type Client struct { //the workers
 	last_ping time.Time
 	auth      bool
 	mu        *sync.Mutex
+	quitch    chan struct{}
 }
 
 type Server struct {
@@ -65,20 +63,25 @@ func NewServer(addr string) *Server {
 
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.Addr)
+
 	if err != nil {
 		log.Print("Error in starting the tcp server: ", ln)
 		return err
 	}
+	s.Listener = ln
 	defer ln.Close()
-	s.accept_loop()
-	s.check_heartbeat()
+	go s.accept_loop()
+
+	go s.check_heartbeat()
 	<-s.quitch
 	return nil
 }
 
 func (s *Server) accept_loop() {
+
 	for {
 		conn, err := s.Listener.Accept()
+		//log.Print("new")
 		if err != nil {
 			log.Print("Couldnt accept connection :", err)
 			continue
@@ -91,11 +94,13 @@ func (s *Server) send(w io.Writer, kind byte, payload []byte) error {
 	length := uint32(1 + len(payload))
 	var header [5]byte
 	//	var w io.Writer = client.conn
-	binary.BigEndian.PutUint32(header[0:4], length)
+	binary.BigEndian.PutUint32(header[:], length)
 	header[4] = kind
 	if _, err := w.Write(header[:]); err != nil {
 		return err
 	}
+	//	log.Print("sending: ", kind)
+	//	log.Print("length:", length)
 	if len(payload) > 0 {
 		_, err := w.Write(payload)
 		return err
@@ -125,47 +130,53 @@ func (s *Server) read_loop(conn net.Conn) {
 		log.Print("IDK TF IS WRONG HERE //// or someone malicious")
 		return
 	}
+
+	//log.Print("messgae type 1: ", type_buf[0], Message_type(type_buf[0]))
+
 	payload_len := int(length - 1)
 	payload := make([]byte, payload_len)
 	if _, err := io.ReadFull(conn, payload[:]); err != nil {
 		log.Print("couldnt read the payload:", err)
 		return
 	}
+
+	// log.Print("CLient joined payoad:", string(msg.payload))
+	// log.Print("CLient joined length:", msg.length)
+	// log.Print("CLient joined type :", msg.msg_type)
+	s.mu.Lock()
 	s.clients[string(payload)] = &Client{
-		conn:  conn,
-		id:    string(payload),
-		ready: true,
-		mu:    s.mu,
+		conn:   conn,
+		id:     string(payload),
+		ready:  true,
+		mu:     s.mu,
+		quitch: make(chan struct{}, 2),
 	}
+	s.mu.Unlock()
 
-	// if Message_type(msg[0]) == CONNECT {
-	// 	s.clients[msg[1:len(msg)]] = &Client{
-	// 		conn:  conn,
-	// 		id:    msg[1:len(msg)],
-	// 		ready: true,
-	// 		mu:    s.mu,
-	// 	}
-	// }
 	for {
-		// new_msg, err := reader.ReadString('\n')
-		// if err != nil {
-		// 	log.Print("faulyt message: ", err)
-		// 	continue
-		// }
-		// val, ok := s.clients[msg[1:len(msg)]]
-		// if ok {
-		// 	val.message_handler(new_msg)
-		// }
+		s.mu.Lock()
 		val, ok := s.clients[string(payload)]
-		if ok {
-			val.message_handler()
-		}
+		s.mu.Unlock()
 
+		if ok {
+			select {
+			case <-val.quitch:
+				{
+					return
+				}
+			default:
+				{
+					val.message_handler()
+				}
+			}
+		}
 	}
 }
 
 func (s *Server) check_heartbeat() {
+
 	for {
+		//log.Print("heartbeat")
 		time.Sleep(time.Duration(1) * time.Second)
 
 		//i have to make it retry
@@ -177,6 +188,18 @@ func (s *Server) check_heartbeat() {
 		for key, value := range Worker_map.List {
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
 				delete(Worker_map.List, key)
+
+				val, o := s.clients[key]
+				if !o {
+					break
+				}
+				val.mu.Lock()
+				val.conn.Close()
+				val.quitch <- struct{}{}
+				delete(s.clients, key)
+				val.mu.Unlock()
+
+				Del_consumer([]string{key})
 			}
 		}
 		Worker_map.Mu.Unlock()
@@ -197,6 +220,7 @@ func (client *Client) send(kind byte, payload []byte) error {
 	}
 	return nil
 }
+
 func (client *Client) read_message() (msg Message, err error) {
 	var len_buf [4]byte
 	var r io.Reader
@@ -212,15 +236,20 @@ func (client *Client) read_message() (msg Message, err error) {
 	}
 
 	msgTypeBuf := make([]byte, 1)
+	//	log.Print("messgae type: ", Message_type(msgTypeBuf[0]))
+
 	if _, err = io.ReadFull(r, msgTypeBuf); err != nil {
 		return Message{}, err
 	}
 
 	msg_type := msgTypeBuf[0]
 
-	payload_len := int(length - 1)
+	payload_len := length - 1
 	if payload_len > 0 {
 		payload := make([]byte, payload_len)
+		if _, err := io.ReadFull(r, payload[:]); err != nil {
+			return Message{}, err
+		}
 		msg = Message{
 			length:   length,
 			msg_type: msg_type,
@@ -229,47 +258,80 @@ func (client *Client) read_message() (msg Message, err error) {
 		return msg, err
 	}
 	return Message{}, err
-
 }
 
 func (client *Client) message_handler() {
 	msg, err := client.read_message()
 	if err != nil {
-		log.Print("couldnt parse the message")
+		if err == io.EOF {
+			client.conn.Close()
+			log.Printf("Connection to the client %d is closed", client.id)
+			client.quitch <- struct{}{}
+			return
+		}
+		log.Print("couldnt parse the message", err)
 		return
 	}
+	//log.Print("type:", msg.msg_type)
+	//log.Print("length:", msg.length)
+	//log.Print("payload:", string(msg.payload))
+
 	switch Message_type(msg.msg_type) {
 	case CONNECT:
 		{
-			//auth function here
 			client.auth = true
 			client.ready = true
 		}
 	case HEARTBEAT:
 		{
+			//log.Print("heartbeat")
 			val, ok := Worker_map.List[client.id]
 			if !ok {
-				client.send(byte(HEARTBEAT), []byte("0"))
+				err := client.send(HEARTBEAT, []byte("0"))
+				if err != nil {
+					log.Print("couldnt send the heartbeat res")
+				}
 				break
 			}
+			Worker_map.Mu.Lock()
 			val.Last_ping = time.Now().UTC().UnixMilli()
+			Worker_map.Mu.Unlock()
+
 		}
 
 	case TACK:
 		{
-			mess := "1"
-			if string(msg.payload) == "0" {
-				mess = "0"
-			}
+			//	log.Print("TACK")
+
 			Worker_map.Mu.Lock()
-			worker, _ := Worker_map.List[client.id]
+			worker, ok := Worker_map.List[client.id]
+			if !ok {
+				err := client.send(TACK, []byte("0"))
+				if err != nil {
+					log.Print("couldnt send data")
+				}
+				break
+			}
 			Worker_map.Mu.Unlock()
-			ACK_channel <- worker.Job_id
-			client.send(byte(TACK), []byte(mess))
+			if string(msg.payload) == "1" {
+				//log.Print("ack")
+				ACK_channel <- worker.Job_id
+			}
+			err := client.send(TACK, []byte("1"))
+			if err != nil {
+				log.Print("couldnt send the tack res")
+			}
+
 		}
 	case PULL:
 		{
+			//log.Print("PULL")
 			job := Feed_to_worker(client.id)
+			//log.Print("asking")
+			if job == nil {
+				client.send(PULL, []byte("0"))
+				break
+			}
 			Worker_map.Mu.Lock()
 			Worker_map.List[client.id] = &types.Worker{
 				ID:        client.id,
@@ -278,12 +340,18 @@ func (client *Client) message_handler() {
 			}
 			Worker_map.Mu.Unlock()
 			tbs, _ := json.Marshal(job.Values["data"])
-			client.send(PULL, []byte(tbs))
+			err := client.send(PULL, []byte(tbs))
+			if err != nil {
+				log.Print("couldnt send the pull res", err)
+			}
 		}
 	default:
 		{
-			log.Print("Invalid messgae type")
-			client.send(INVALID, []byte("0"))
+			//log.Print("Invalid messgae type")
+			err := client.send(INVALID, []byte("0"))
+			if err != nil {
+				log.Print("couldnt send the invalid res")
+			}
 		}
 	}
 }

@@ -34,3 +34,4 @@ var Ingest_channel = make(chan types.Job, 1000)
 var Worker_channel = make(chan types.Job, 1000)
 
 var ACK_channel = make(chan string, 1000)
+var Del_channel = make(chan string, 10)

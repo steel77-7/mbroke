@@ -2,6 +2,7 @@ package utils
 
 import (
 	"log"
+	"time"
 
 	"github.com/mbroke/types"
 	"github.com/redis/go-redis/v9"
@@ -34,6 +35,32 @@ func ACK(ids []string) bool {
 		}
 	}
 	return false
+}
+func Del_consumer(ids []string) {
+
+	for _, id := range ids {
+		_, err := Redis.XGroupDelConsumer(CTX, stream, "primary", id).Result()
+		if err != nil {
+			log.Print("Consumer not deleted", err)
+		}
+		log.Print("worker delted")
+	}
+}
+
+func Consumer_deleter() {
+	for {
+		if len(Del_channel) > 5 {
+			var tp []string
+			for {
+				select {
+				case id := <-Del_channel:
+					tp = append(tp, id)
+				default:
+					Del_consumer(tp)
+				}
+			}
+		}
+	}
 }
 
 // runs in the background  to ack jobs
@@ -72,7 +99,10 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 		log.Print("error in fetching the data from redis:", errn)
 		return nil
 	}
+	//log.Print("1")
 	if err == nil && len(to_claim) > 200 || (err == nil && len(new) == 0) {
+		log.Print("2")
+
 		for _, p := range to_claim {
 			if p.RetryCount > 5 {
 				tp, err := Redis.XRange(CTX, stream, p.ID, p.ID).Result()
@@ -100,6 +130,7 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 			Worker_map.Mu.Lock()
 			val, ok := Worker_map.List[p.Consumer]
 			Worker_map.Mu.Unlock()
+			log.Print("2.2")
 
 			if (!ok) || (ok && val.Job_id != p.ID) {
 				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
@@ -108,6 +139,7 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 					Consumer: id,
 					Messages: []string{p.ID},
 				}).Result()
+				log.Print("pending")
 				if err != nil {
 					log.Print("COuldnt claim the job")
 					return nil
@@ -122,18 +154,23 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 		log.Print("Coudn't read values from redis [Feed to the broker]:%v ", err)
 		log.Fatal("crased in feed to worker")
 	}
+	//log.Print("3")
+
 	args := &redis.XReadGroupArgs{
 		Streams:  []string{stream, ">"},
 		Group:    "primary",
 		Consumer: id,
 		Count:    1,
-		Block:    0,
+		Block:    100 * time.Millisecond,
 	}
 	res, err1 := Redis.XReadGroup(CTX, args).Result()
 	if err1 != nil {
-		log.Print("Coudn't read values from redis [Feed to the broker]: ", err)
-		log.Fatal("crased in feed to worker")
+		//log.Print("Coudn't read values from redis [Feed to the broker]: ", err)
+		//	log.Fatal("crased in feed to worker")
+		return nil
 	}
+	//log.Print("4")
+	log.Print("new ")
 	if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
 		return nil
 	}
