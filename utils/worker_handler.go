@@ -7,9 +7,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mbroke/types"
 )
 
@@ -81,7 +83,7 @@ func (s *Server) accept_loop() {
 
 	for {
 		conn, err := s.Listener.Accept()
-		//log.Print("new")
+		log.Print("new")
 		if err != nil {
 			log.Print("Couldnt accept connection :", err)
 			continue
@@ -139,14 +141,20 @@ func (s *Server) read_loop(conn net.Conn) {
 		log.Print("couldnt read the payload:", err)
 		return
 	}
-
+	log.Print(payload)
 	// log.Print("CLient joined payoad:", string(msg.payload))
 	// log.Print("CLient joined length:", msg.length)
 	// log.Print("CLient joined type :", msg.msg_type)
+	if string(payload) != os.Getenv("SECRET") {
+		conn.Close()
+		return
+	}
+	id := fmt.Sprint(uuid.New())
+	log.Print(id)
 	s.mu.Lock()
-	s.clients[string(payload)] = &Client{
+	s.clients[id] = &Client{
 		conn:   conn,
-		id:     string(payload),
+		id:     id,
 		ready:  true,
 		mu:     s.mu,
 		quitch: make(chan struct{}, 2),
@@ -154,8 +162,9 @@ func (s *Server) read_loop(conn net.Conn) {
 	s.mu.Unlock()
 
 	for {
+		//log.Print("read loop")
 		s.mu.Lock()
-		val, ok := s.clients[string(payload)]
+		val, ok := s.clients[id]
 		s.mu.Unlock()
 
 		if ok {
@@ -261,6 +270,7 @@ func (client *Client) read_message() (msg Message, err error) {
 }
 
 func (client *Client) message_handler() {
+	//	log.Print("message ahdnler")
 	msg, err := client.read_message()
 	if err != nil {
 		if err == io.EOF {
@@ -325,7 +335,7 @@ func (client *Client) message_handler() {
 		}
 	case PULL:
 		{
-			//log.Print("PULL")
+			log.Print("PULL")
 			job := Feed_to_worker(client.id)
 			//log.Print("asking")
 			if job == nil {

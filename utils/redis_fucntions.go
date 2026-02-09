@@ -36,6 +36,7 @@ func ACK(ids []string) bool {
 	}
 	return false
 }
+
 func Del_consumer(ids []string) {
 
 	for _, id := range ids {
@@ -43,7 +44,7 @@ func Del_consumer(ids []string) {
 		if err != nil {
 			log.Print("Consumer not deleted", err)
 		}
-		log.Print("worker delted")
+		log.Print("worker deleted")
 	}
 }
 
@@ -84,72 +85,61 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
 		Stream: stream,
 		Group:  "primary",
-		//	Consumer: id,
-		Start: "-",
-		End:   "+",
-		Count: 500,
+		Idle:   500 * time.Millisecond,
+		Start:  "-",
+		End:    "+",
+		Count:  10,
 	}).Result()
 
-	new, errn := Redis.XRead(CTX, &redis.XReadArgs{
-		Streams: []string{"ingest:primary", "0"},
-		Count:   1,
-		Block:   1,
-	}).Result()
-	if errn != nil && errn != redis.Nil {
-		log.Print("error in fetching the data from redis:", errn)
-		return nil
-	}
 	//log.Print("1")
-	if err == nil && len(to_claim) > 200 || (err == nil && len(new) == 0) {
-		log.Print("2")
 
-		for _, p := range to_claim {
-			if p.RetryCount > 5 {
-				tp, err := Redis.XRange(CTX, stream, p.ID, p.ID).Result()
-				if err != nil {
+	for _, p := range to_claim {
+		if p.RetryCount > 5 {
+			log.Print("dead lettered ")
+			tp, err := Redis.XRange(CTX, stream, p.ID, p.ID).Result()
+			if err != nil {
+				log.Print("Couldnt push into the dead end queue: ", err)
+			}
+			if len(tp) == 0 {
+				ACK_channel <- p.ID
+			} else {
+				_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
+					Stream: "ingest:dead_end",
+					Values: tp[0].Values,
+				}).Result()
+				if err1 != nil {
 					log.Print("Couldnt push into the dead end queue: ", err)
 				}
-				if len(tp) == 0 {
-					ACK_channel <- p.ID
-				} else {
-					_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
-						Stream: "ingest:dead_end",
-						Values: tp[0].Values,
-					}).Result()
-					if err1 != nil {
-						log.Print("Couldnt push into the dead end queue: ", err)
-					}
-					_, err2 := Redis.XDel(CTX, stream, p.ID).Result()
-					if err2 != nil {
-						log.Print("Couldnt push into the dead end queue: ", err)
-					}
+				_, err2 := Redis.XDel(CTX, stream, p.ID).Result()
+				if err2 != nil {
+					log.Print("Couldnt push into the dead end queue: ", err)
 				}
-				continue
-				//
 			}
-			Worker_map.Mu.Lock()
-			val, ok := Worker_map.List[p.Consumer]
-			Worker_map.Mu.Unlock()
-			log.Print("2.2")
+			continue
+			//
+		}
+		Worker_map.Mu.Lock()
+		val, ok := Worker_map.List[p.Consumer]
+		Worker_map.Mu.Unlock()
 
-			if (!ok) || (ok && val.Job_id != p.ID) {
-				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
-					Stream:   stream,
-					Group:    "primary",
-					Consumer: id,
-					Messages: []string{p.ID},
-				}).Result()
-				log.Print("pending")
-				if err != nil {
-					log.Print("COuldnt claim the job")
-					return nil
-				}
-				if len(claimed) > 0 {
-					return &claimed[0]
-				}
+		if (!ok) || (ok && val.Job_id != p.ID) {
+			claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
+				Stream:   stream,
+				Group:    "primary",
+				Consumer: id,
+				Messages: []string{p.ID},
+			}).Result()
+			log.Print("pending")
+			if err != nil {
+				log.Print("COuldnt claim the job")
+				return nil
+			}
+			if len(claimed) > 0 {
+				return &claimed[0]
 			}
 		}
 	}
+
 	if err != nil {
 		log.Print("Coudn't read values from redis [Feed to the broker]:%v ", err)
 		log.Fatal("crased in feed to worker")

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"github.com/mbroke/routes"
 	"github.com/mbroke/utils"
 )
@@ -13,6 +14,7 @@ import (
 func main() {
 	//	go utils.Check_heartbeat()
 	go utils.Acker()
+	godotenv.Load()
 	//	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
