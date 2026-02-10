@@ -141,7 +141,7 @@ func (s *Server) read_loop(conn net.Conn) {
 		log.Print("couldnt read the payload:", err)
 		return
 	}
-	log.Print(payload)
+	//log.Print(payload)
 	// log.Print("CLient joined payoad:", string(msg.payload))
 	// log.Print("CLient joined length:", msg.length)
 	// log.Print("CLient joined type :", msg.msg_type)
@@ -150,7 +150,7 @@ func (s *Server) read_loop(conn net.Conn) {
 		return
 	}
 	id := fmt.Sprint(uuid.New())
-	log.Print(id)
+	//log.Print(id)
 	s.mu.Lock()
 	s.clients[id] = &Client{
 		conn:   conn,
@@ -335,7 +335,7 @@ func (client *Client) message_handler() {
 		}
 	case PULL:
 		{
-			log.Print("PULL")
+			//log.Print("PULL")
 			job := Feed_to_worker(client.id)
 			//log.Print("asking")
 			if job == nil {

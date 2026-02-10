@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 )
 
 var stream string = "ingest:primary"
+var IDLE_TIME time.Duration = 1000 * time.Millisecond
 
 func Feed(job types.Job) { //this will be in the ingest
 	tbs := map[string]interface{}{
@@ -27,7 +29,7 @@ func Feed(job types.Job) { //this will be in the ingest
 }
 
 func ACK(ids []string) bool {
-	if err := Redis.XAck(CTX, stream, "primary", ids...).Err(); err != nil {
+	if err := Redis.XAck(CTX, stream, "primary", ids...).Err(); err == nil {
 		for _, id := range ids {
 			if err := Redis.XDel(CTX, stream, id); err != nil {
 				return true
@@ -64,28 +66,32 @@ func Consumer_deleter() {
 	}
 }
 
-// runs in the background  to ack jobs
 func Acker() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	var batch []string
+
 	for {
-		if len(ACK_channel) > 100 {
-			var tp []string
-			for {
-				select {
-				case id := <-ACK_channel:
-					tp = append(tp, id)
-				default:
-					ACK(tp)
-				}
+		select {
+		case id := <-ACK_channel:
+			batch = append(batch, id)
+
+		case <-ticker.C:
+			if len(batch) > 0 {
+				ACK(batch)
+				batch = nil
 			}
 		}
 	}
 }
+
 func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker feeding
 
 	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
 		Stream: stream,
 		Group:  "primary",
-		Idle:   500 * time.Millisecond,
+		Idle:   1000 * time.Millisecond,
 		Start:  "-",
 		End:    "+",
 		Count:  10,
@@ -94,6 +100,7 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 	//log.Print("1")
 
 	for _, p := range to_claim {
+		fmt.Print(len(to_claim))
 		if p.RetryCount > 5 {
 			log.Print("dead lettered ")
 			tp, err := Redis.XRange(CTX, stream, p.ID, p.ID).Result()
@@ -101,48 +108,53 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 				log.Print("Couldnt push into the dead end queue: ", err)
 			}
 			if len(tp) == 0 {
-				ACK_channel <- p.ID
-			} else {
-				_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
-					Stream: "ingest:dead_end",
-					Values: tp[0].Values,
-				}).Result()
-				if err1 != nil {
-					log.Print("Couldnt push into the dead end queue: ", err)
-				}
-				_, err2 := Redis.XDel(CTX, stream, p.ID).Result()
-				if err2 != nil {
-					log.Print("Couldnt push into the dead end queue: ", err)
-				}
+				log.Print(tp)
+				continue
+			}
+			ACK_channel <- p.ID //ack it first
+
+			_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
+				Stream: "ingest:dead_end",
+				Values: tp[0].Values,
+			}).Result()
+			if err1 != nil {
+				log.Print("Couldnt push into the dead end queue: ", err)
+			}
+			_, err2 := Redis.XDel(CTX, stream, p.ID).Result()
+			if err2 != nil {
+				log.Print("Couldnt push into the dead end queue: ", err)
 			}
 			continue
-			//
 		}
+
 		Worker_map.Mu.Lock()
 		val, ok := Worker_map.List[p.Consumer]
 		Worker_map.Mu.Unlock()
 
 		if (!ok) || (ok && val.Job_id != p.ID) {
-			claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
-				Stream:   stream,
-				Group:    "primary",
-				Consumer: id,
-				Messages: []string{p.ID},
-			}).Result()
-			log.Print("pending")
-			if err != nil {
-				log.Print("COuldnt claim the job")
-				return nil
-			}
-			if len(claimed) > 0 {
-				return &claimed[0]
+			if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * IDLE_TIME) {
+				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
+					Stream:   stream,
+					Group:    "primary",
+					Consumer: id,
+					Messages: []string{p.ID},
+				}).Result()
+				log.Print("pending")
+				if err != nil {
+					log.Print("COuldnt claim the job")
+					return nil
+				}
+				if len(claimed) > 0 {
+					return &claimed[0]
+				}
 			}
 		}
 	}
 
 	if err != nil {
 		log.Print("Coudn't read values from redis [Feed to the broker]:%v ", err)
-		log.Fatal("crased in feed to worker")
+		//log.Fatal("crased in feed to worker")
+		return nil
 	}
 	//log.Print("3")
 
@@ -160,7 +172,7 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 		return nil
 	}
 	//log.Print("4")
-	log.Print("new ")
+	//log.Print("new ")
 	if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
 		return nil
 	}
