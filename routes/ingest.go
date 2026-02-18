@@ -9,17 +9,10 @@ import (
 	"github.com/mbroke/utils"
 )
 
-type job_req struct {
-	ID   string          `json:"id"`
-	Data json.RawMessage `json:"data"`
-}
-
 func Ingest(c *gin.Context) {
 	defer c.Request.Body.Close()
 	job := types.Job{}
-	req := job_req{}
-	//	raw, _ := c.GetRawData()
-	//	log.Print("Raw :::::::::::", string(raw))
+	req := types.Job_req{}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Print("Couldn't bind the json: ", err)
 		c.JSON(500, gin.H{
@@ -28,10 +21,20 @@ func Ingest(c *gin.Context) {
 		})
 		return
 	}
-	///////
-	job.ID = req.ID
+	job.Metadata = string(req.Metadata)
 	job.Data = string(req.Data)
 	//	utils.Ingest_channel <- job
+	var meta types.Metadata
+	err := json.Unmarshal(req.Metadata, &meta)
+	if err != nil {
+		log.Println("failed to parse metadata:", err)
+		return
+	}
+	err1 := utils.Add_into_dict(meta)
+	if err1 != nil {
+		log.Print("couldnt add to the dict", err)
+		return
+	}
 	utils.Feed(job)
 	c.JSON(201, gin.H{
 		"message": "job added to the queue",

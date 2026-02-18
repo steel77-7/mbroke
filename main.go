@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -12,41 +13,34 @@ import (
 )
 
 func main() {
-	//	go utils.Check_heartbeat()
-	go utils.Acker()
+
 	godotenv.Load()
-	//	gin.SetMode(gin.ReleaseMode)
+	utils.Conf, utils.RedConf = utils.LoadConfig()
+	log.Print("redis addr", utils.Conf)
+
+	go utils.Acker()
+	go utils.Reply_to_producer()
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.GET("/", func(c *gin.Context) {
-		c.IndentedJSON(http.StatusOK, res{Msg: "helooooo beitch"})
-	})
+
 	router.POST("/ingest", routes.Ingest)
-	// router.POST("/worker", routes.Worker_feeding)
-	// router.POST("/heartbeat", routes.Heartbeat)
-	// router.POST("/ack", routes.Ack)
 	go func() {
-		server := utils.NewServer(":9000")
-		server.Start()
+		server := utils.NewServer(":" + fmt.Sprint(utils.Conf.TCPServerPort))
+		err := server.Start()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}()
 	utils.Redis_init()
 	server := &http.Server{
-		Addr:           ":8000",
+		Addr:           ":" + fmt.Sprint(utils.Conf.Port),
 		Handler:        router,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   5 * time.Second,
 		IdleTimeout:    10 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-	log.Print("Sever runnign")
+
+	log.Print("Sever running")
 	log.Fatal(server.ListenAndServe())
-	// router.Run("localhost:8000")
-}
-
-type res struct {
-	Msg string `json:"msg"`
-}
-
-func home(c *gin.Context) {
-	c.IndentedJSON(http.StatusOK, res{Msg: "helooooo beitch"})
 }

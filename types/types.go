@@ -1,8 +1,14 @@
 package types
 
+import (
+	"encoding/json"
+	"sync"
+	// "github.com/mbroke/types"
+)
+
 type Job struct {
-	ID   string `json:"id"`
-	Data string `json:"data"`
+	Metadata string `json:"metadata"`
+	Data     string `json:"data"`
 }
 
 type Ack_request struct {
@@ -10,7 +16,7 @@ type Ack_request struct {
 	ACK bool   `json:"ack"`
 }
 
-type Worker struct { //for teh heartbeat
+type Worker struct {
 	ID        string `json:"id"`
 	Job_id    string `json:"job_id"`
 	Last_ping int64  `json:"last_ping"`
@@ -18,4 +24,25 @@ type Worker struct { //for teh heartbeat
 
 type Heartbeat struct {
 	ID string `json:"id"`
+}
+type Metadata struct {
+	ID    string `redis:"id" json:"id"`
+	Url   string `redis:"url" json:"url"`
+	State bool   `redis:"state" json:"state"`
+}
+type Job_req struct {
+	//ID   string          `json:"id"`
+	Metadata json.RawMessage `json:"metadata"`
+	Data     json.RawMessage `json:"data"`
+}
+
+type Message struct {
+	Length   uint32
+	Msg_type byte
+	Payload  []byte
+}
+
+type Work_map struct {
+	Mu   *sync.RWMutex
+	List map[string]*Worker
 }
