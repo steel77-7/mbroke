@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -301,15 +302,24 @@ func Reply_to_producer() {
 
 		Redis.Del(CTX, jobID)
 	}
-
 }
 
 func Add_to_set(id string) {
-	err := Redis.SAdd(CTX, setName, id).Err()
+	currTime := float64(time.Now().Unix() + 10)
+	_, err := Redis.ZAdd(CTX, setName, redis.Z{Member: id, Score: currTime}).Result()
 	if err != nil {
 		log.Print("[ADD TO SET FUNCTION] Couldnt add to the set ")
 		return
 	}
+
+}
+
+func Fetch_dead_workers(time float64) []string {
+	res, err := Redis.ZRangeByScore(CTX, setName, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%f", time)}).Result()
+	if err != nil {
+		log.Fatal("[IN THE FETCH DEAD WORKERs] COULDNT FETCH WORKER", err)
+	}
+	return res
 
 }
 
@@ -331,9 +341,11 @@ func Check_worker_if_present(id string) bool {
 	return exists
 }
 
-//now for the worker specific function (hearbeats last checked  and maybe lease)
-//always ask the set first before doing anything
-
-
-
-func
+func Worker_map_len() int64 {
+	count, err := Redis.SCard(CTX, setName).Result()
+	if err != nil {
+		log.Print("[WORKER MAP LEN] OCuldnt findn the length")
+		return -1
+	}
+	return count
+}

@@ -171,15 +171,51 @@ func (s *Server) read_loop(conn net.Conn) {
 	}
 }
 
+// func (s *Server) check_heartbeat() {
+
+// 	for {
+// 		//log.Print("heartbeat")
+// 		time.Sleep(time.Duration(1) * time.Second)
+// 		var count int64 = Worker_map_len()
+// 		switch {
+// 		case count == 0:
+// 			continue
+// 		case count < 0:
+// 			log.Fatal("[IN THE CHECK HEARTBEAT] ISSUE IN FINDING OUT THE LENGTH")
+
+// 		}
+// 		if len(Worker_map.List) == 0 {
+// 			continue
+// 		}
+// 		Worker_map.Mu.Lock()
+// 		for key, value := range Worker_map.List {
+// 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
+// 				delete(Worker_map.List, key)
+
+// 				val, o := s.clients[key]
+// 				if !o {
+// 					break
+// 				}
+// 				val.mu.Lock()
+// 				val.conn.Close()
+// 				val.quitch <- struct{}{}
+// 				delete(s.clients, key)
+// 				val.mu.Unlock()
+
+// 				Del_consumer([]string{key})
+// 			}
+// 		}
+// 		Worker_map.Mu.Unlock()
+// 	}
+// }
+
 func (s *Server) check_heartbeat() {
 
 	for {
-		//log.Print("heartbeat")
 		time.Sleep(time.Duration(1) * time.Second)
 
-		if len(Worker_map.List) == 0 {
-			continue
-		}
+		var dead_workers []string = Fetch_dead_workers(float64(time.Now().Unix() + 10))
+
 		Worker_map.Mu.Lock()
 		for key, value := range Worker_map.List {
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
@@ -201,6 +237,7 @@ func (s *Server) check_heartbeat() {
 		Worker_map.Mu.Unlock()
 	}
 }
+
 func (client *Client) send(kind byte, payload []byte) error {
 	length := uint32(1 + len(payload))
 	var header [5]byte
