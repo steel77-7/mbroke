@@ -15,6 +15,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+var setName string = "workerset"
+
 func Feed(job types.Job) { //this will be in the ingest
 	tbs := map[string]interface{}{
 		"metadata": job.Metadata,
@@ -301,3 +303,37 @@ func Reply_to_producer() {
 	}
 
 }
+
+func Add_to_set(id string) {
+	err := Redis.SAdd(CTX, setName, id).Err()
+	if err != nil {
+		log.Print("[ADD TO SET FUNCTION] Couldnt add to the set ")
+		return
+	}
+
+}
+
+func Add_to_map(worker *types.Worker) {
+	err := Redis.HSet(CTX, "worker:"+(worker.ID), worker).Err()
+	if err != nil {
+		log.Print("[ADD TO MAP] Cannot add to map : ", worker.ID, "\n", err)
+		return
+	}
+	log.Print("WORker added to the map : ", worker.ID)
+}
+
+func Check_worker_if_present(id string) bool {
+	exists, err := Redis.SIsMember(CTX, setName, id).Result()
+	if err != nil {
+		log.Print("[CHECK WORKER IN SET] some error", err)
+		return false
+	}
+	return exists
+}
+
+//now for the worker specific function (hearbeats last checked  and maybe lease)
+//always ask the set first before doing anything
+
+
+
+func

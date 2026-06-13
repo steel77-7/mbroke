@@ -42,13 +42,15 @@ type Server struct {
 	clients  map[string]*Client
 }
 
+// the problem is here
+// jaha jaha pe worker map use hua hai waha pe redis lgwa de
+// dhang se krna aur
 var Worker_map types.Work_map = types.Work_map{
 	Mu:   &sync.RWMutex{},
 	List: make(map[string]*types.Worker),
 }
 
 func NewServer(addr string) *Server {
-
 	return &Server{
 		Addr:    addr,
 		clients: make(map[string]*Client),
@@ -89,14 +91,12 @@ func (s *Server) accept_loop() {
 func (s *Server) send(w io.Writer, kind byte, payload []byte) error {
 	length := uint32(1 + len(payload))
 	var header [5]byte
-	//	var w io.Writer = client.conn
 	binary.BigEndian.PutUint32(header[:], length)
 	header[4] = kind
 	if _, err := w.Write(header[:]); err != nil {
 		return err
 	}
-	//	log.Print("sending: ", kind)
-	//	log.Print("length:", length)
+
 	if len(payload) > 0 {
 		_, err := w.Write(payload)
 		return err
@@ -104,6 +104,7 @@ func (s *Server) send(w io.Writer, kind byte, payload []byte) error {
 	return nil
 }
 
+// [....][.][,,,,,,,,]protocol ka format
 func (s *Server) read_loop(conn net.Conn) {
 	var len_buf [4]byte
 	//	var r io.Reader
@@ -127,18 +128,12 @@ func (s *Server) read_loop(conn net.Conn) {
 		return
 	}
 
-	//log.Print("messgae type 1: ", type_buf[0], Message_type(type_buf[0]))
-
 	payload_len := int(length - 1)
 	payload := make([]byte, payload_len)
 	if _, err := io.ReadFull(conn, payload[:]); err != nil {
 		log.Print("couldnt read the payload:", err)
 		return
 	}
-	//log.Print(payload)
-	// log.Print("CLient joined payoad:", string(msg.payload))
-	// log.Print("CLient joined length:", msg.length)
-	// log.Print("CLient joined type :", msg.msg_type)
 	if string(payload) != Conf.Secret {
 		conn.Close()
 		return
@@ -182,11 +177,9 @@ func (s *Server) check_heartbeat() {
 		//log.Print("heartbeat")
 		time.Sleep(time.Duration(1) * time.Second)
 
-		//i have to make it retry
 		if len(Worker_map.List) == 0 {
 			continue
 		}
-		//log.Print("lub dub")
 		Worker_map.Mu.Lock()
 		for key, value := range Worker_map.List {
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {

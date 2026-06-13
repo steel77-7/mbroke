@@ -17,9 +17,9 @@ type Ack_request struct {
 }
 
 type Worker struct {
-	ID        string `json:"id"`
-	Job_id    string `json:"job_id"`
-	Last_ping int64  `json:"last_ping"`
+	ID        string `json:"id" redis:"id"`
+	Job_id    string `json:"job_id" redis:"job_id"`
+	Last_ping int64  `json:"last_ping" redis:"last_ping"`
 }
 
 type Heartbeat struct {
