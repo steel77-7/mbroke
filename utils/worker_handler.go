@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -215,7 +216,24 @@ func (s *Server) check_heartbeat() {
 		time.Sleep(time.Duration(1) * time.Second)
 
 		var dead_workers []string = Fetch_dead_workers(float64(time.Now().Unix() + 10))
+		for _, dead := range dead_workers {
+			//kickj from the map
+			// from the client thing
+			// clear the job for next pull
+			Remove_worker_from_map(dead)
+			Remove_from_set(dead)
+			val, o := s.clients[dead]
+			if !o {
+				break
+			}
+			val.mu.Lock()
+			val.conn.Close()
+			val.quitch <- struct{}{}
+			delete(s.clients, dead)
+			val.mu.Unlock()
 
+			Del_consumer([]string{dead})
+		}
 		Worker_map.Mu.Lock()
 		for key, value := range Worker_map.List {
 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
@@ -314,11 +332,11 @@ func (client *Client) message_handler() {
 		}
 	case HEARTBEAT:
 		{
-			//log.Print("heartbeat")
+
 			Worker_map.Mu.Lock()
 			val, ok := Worker_map.List[client.id]
 			Worker_map.Mu.Unlock()
-
+			now, _ := strconv.ParseFloat(string(msg.Payload), 64)
 			if !ok {
 				err := client.send(HEARTBEAT, []byte("0"))
 				if err != nil {
@@ -326,7 +344,7 @@ func (client *Client) message_handler() {
 				}
 				break
 			}
-
+			Update_score(client.id, now)
 			Worker_map.Mu.Lock()
 			val.Last_ping = time.Now().UTC().UnixMilli()
 			Worker_map.Mu.Unlock()
@@ -337,7 +355,8 @@ func (client *Client) message_handler() {
 		{
 
 			Worker_map.Mu.Lock()
-			worker, ok := Worker_map.List[client.id]
+			//worker, _ := Worker_map.List[client.id]
+			ok := Present_in_set(client.id)
 			if !ok {
 				err := client.send(TACK, []byte("0"))
 				if err != nil {
@@ -345,19 +364,27 @@ func (client *Client) message_handler() {
 				}
 				break
 			}
+			worker := Fetch_worker(client.id)
 			Worker_map.Mu.Unlock()
 			if string(msg.Payload) == "1" {
 				//log.Print("ack")
-				ACK_channel <- worker.Job_id
-			} else {
-				Worker_map.Mu.Lock()
-				worker, ok := Worker_map.List[client.id]
-				if ok {
-					worker.Job_id = ""
-				}
-				Worker_map.Mu.Unlock()
-
+				ACK_channel <- worker["Job_id"]
 			}
+			// } else {
+			// 	Worker_map.Mu.Lock()
+			// 	workerr, ok := Worker_map.List[client.id]
+			// 	if ok {
+			// 		worker["Job_id"] = ""
+
+			// 	Worker_map.Mu.Unlock()
+
+			// }
+			// worker["Job_id"] = ""
+			// last_ping, _ := strconv.ParseInt(worker["Last_ping"], 10, 64)
+			// var new_data *types.Worker = &types.Worker{ID: worker["ID"], Job_id: worker["Job_id"], Last_ping: last_ping}
+			// Add_to_map(new_data)
+			Remove_worker_from_map(client.id)
+			//remove the worker from the map as well if they dopnt have job
 			err := client.send(TACK, []byte("1"))
 			if err != nil {
 				log.Print("couldnt send the tack res")
@@ -372,13 +399,12 @@ func (client *Client) message_handler() {
 				client.send(PULL, []byte("0"))
 				break
 			}
-			Worker_map.Mu.Lock()
-			Worker_map.List[client.id] = &types.Worker{
+			worker := &types.Worker{
 				ID:        client.id,
 				Job_id:    job.ID,
 				Last_ping: time.Now().UTC().UnixMilli(),
 			}
-			Worker_map.Mu.Unlock()
+			Add_to_map(worker)
 			tbs, _ := json.Marshal(job.Values["data"])
 			err := client.send(PULL, []byte(tbs))
 			if err != nil {

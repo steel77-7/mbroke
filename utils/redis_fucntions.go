@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -314,6 +315,31 @@ func Add_to_set(id string) {
 
 }
 
+func Update_score(id string, time float64) {
+	_, err := Redis.ZAdd(CTX, setName, redis.Z{Member: id, Score: time}).Result()
+	if err != nil {
+		log.Print("[UPDATE SCORE] Couldnt UPDATE  the set ")
+		return
+	}
+}
+
+func Present_in_set(id string) bool {
+	_, err := Redis.ZScore(CTX, setName, id).Result()
+	if err != nil {
+		log.Fatal("[PRESENT IN SET] ", err)
+
+	} else if errors.Is(err, redis.Nil) {
+		return false
+	}
+	return true
+
+}
+func Remove_from_set(id string) {
+	_, err := Redis.ZRem(CTX, setName, id).Result()
+	if err != nil {
+		log.Fatal("[REMOVE FORM SET]", err)
+	}
+}
 func Fetch_dead_workers(time float64) []string {
 	res, err := Redis.ZRangeByScore(CTX, setName, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%f", time)}).Result()
 	if err != nil {
@@ -331,7 +357,12 @@ func Add_to_map(worker *types.Worker) {
 	}
 	log.Print("WORker added to the map : ", worker.ID)
 }
-
+func Remove_worker_from_map(id string) {
+	_, err := Redis.HDel(CTX, "worker:"+id).Result()
+	if err != nil {
+		log.Fatal("[REMOVE FROM WORKER MAP] Couldnt remove the worker: ", err)
+	}
+}
 func Check_worker_if_present(id string) bool {
 	exists, err := Redis.SIsMember(CTX, setName, id).Result()
 	if err != nil {
@@ -348,4 +379,12 @@ func Worker_map_len() int64 {
 		return -1
 	}
 	return count
+}
+
+func Fetch_worker(id string) map[string]string {
+	res, err := Redis.HGetAll(CTX, "worker:"+id).Result()
+	if err != nil {
+		log.Fatal("[IN THE FETCH WORKER] Couldnt fetch the worker")
+	}
+	return res
 }
