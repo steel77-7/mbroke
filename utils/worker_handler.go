@@ -118,12 +118,14 @@ func (s *Server) read_loop(conn net.Conn) {
 		log.Print("Coudlnt establish connection [LENGTH IS 0] ")
 		return
 	}
+	log.Print("the length: ", string(len_buf[:]))
 
 	type_buf := make([]byte, 1)
 	if _, err := io.ReadFull(conn, type_buf[:]); err != nil {
 		log.Print("couldnt read the type:", err)
 		return
 	}
+	log.Print("the type: ", type_buf[:])
 	if Message_type(type_buf[0]) != CONNECT {
 		log.Print("IDK TF IS WRONG HERE //// or someone malicious")
 		return
@@ -131,12 +133,15 @@ func (s *Server) read_loop(conn net.Conn) {
 
 	payload_len := int(length - 1)
 	payload := make([]byte, payload_len)
+
 	if _, err := io.ReadFull(conn, payload[:]); err != nil {
 		log.Print("couldnt read the payload:", err)
 		return
 	}
+	log.Print("paylaod: ", string(payload))
 	if string(payload) != Conf.Secret {
 		conn.Close()
+		log.Print("Connection closed")
 		return
 	}
 	id := fmt.Sprint(uuid.New())
@@ -150,9 +155,9 @@ func (s *Server) read_loop(conn net.Conn) {
 		quitch: make(chan struct{}, 2),
 	}
 	s.mu.Unlock()
-
+	Add_to_set(id)
+	log.Print("reaached the server registeration")
 	for {
-		//log.Print("read loop")
 		s.mu.Lock()
 		val, ok := s.clients[id]
 		s.mu.Unlock()
@@ -161,6 +166,7 @@ func (s *Server) read_loop(conn net.Conn) {
 			select {
 			case <-val.quitch:
 				{
+					log.Print("disconneting")
 					return
 				}
 			default:
@@ -172,50 +178,12 @@ func (s *Server) read_loop(conn net.Conn) {
 	}
 }
 
-// func (s *Server) check_heartbeat() {
-
-// 	for {
-// 		//log.Print("heartbeat")
-// 		time.Sleep(time.Duration(1) * time.Second)
-// 		var count int64 = Worker_map_len()
-// 		switch {
-// 		case count == 0:
-// 			continue
-// 		case count < 0:
-// 			log.Fatal("[IN THE CHECK HEARTBEAT] ISSUE IN FINDING OUT THE LENGTH")
-
-// 		}
-// 		if len(Worker_map.List) == 0 {
-// 			continue
-// 		}
-// 		Worker_map.Mu.Lock()
-// 		for key, value := range Worker_map.List {
-// 			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
-// 				delete(Worker_map.List, key)
-
-// 				val, o := s.clients[key]
-// 				if !o {
-// 					break
-// 				}
-// 				val.mu.Lock()
-// 				val.conn.Close()
-// 				val.quitch <- struct{}{}
-// 				delete(s.clients, key)
-// 				val.mu.Unlock()
-
-// 				Del_consumer([]string{key})
-// 			}
-// 		}
-// 		Worker_map.Mu.Unlock()
-// 	}
-// }
-
 func (s *Server) check_heartbeat() {
 
 	for {
 		time.Sleep(time.Duration(1) * time.Second)
 
-		var dead_workers []string = Fetch_dead_workers(float64(time.Now().Unix() + 10))
+		var dead_workers []string = Fetch_dead_workers(float64(time.Now().Unix()))
 		for _, dead := range dead_workers {
 			//kickj from the map
 			// from the client thing
@@ -234,25 +202,7 @@ func (s *Server) check_heartbeat() {
 
 			Del_consumer([]string{dead})
 		}
-		Worker_map.Mu.Lock()
-		for key, value := range Worker_map.List {
-			if time.Now().UTC().UnixMilli()-value.Last_ping >= 10000 {
-				delete(Worker_map.List, key)
 
-				val, o := s.clients[key]
-				if !o {
-					break
-				}
-				val.mu.Lock()
-				val.conn.Close()
-				val.quitch <- struct{}{}
-				delete(s.clients, key)
-				val.mu.Unlock()
-
-				Del_consumer([]string{key})
-			}
-		}
-		Worker_map.Mu.Unlock()
 	}
 }
 
@@ -273,27 +223,29 @@ func (client *Client) send(kind byte, payload []byte) error {
 }
 
 func (client *Client) read_message() (msg types.Message, err error) {
+	log.Print("read message")
 	var len_buf [4]byte
-	var r io.Reader
-	r = client.conn
+	var r io.Reader = client.conn
+
 	if _, err := io.ReadFull(r, len_buf[:]); err != nil {
+		log.Print("it closed alrweadt")
 		return types.Message{}, err
 	}
-
 	length := binary.BigEndian.Uint32(len_buf[:])
 	if length < 1 {
-		err = fmt.Errorf("invalid length")
-		return types.Message{}, err
+		return types.Message{}, fmt.Errorf("invalid length")
 	}
 
 	msgTypeBuf := make([]byte, 1)
-	//	log.Print("messgae type: ", Message_type(msgTypeBuf[0]))
-
 	if _, err = io.ReadFull(r, msgTypeBuf); err != nil {
 		return types.Message{}, err
 	}
-
 	msg_type := msgTypeBuf[0]
+
+	msg = types.Message{
+		Length:   length,
+		Msg_type: msg_type,
+	}
 
 	payload_len := length - 1
 	if payload_len > 0 {
@@ -301,19 +253,16 @@ func (client *Client) read_message() (msg types.Message, err error) {
 		if _, err := io.ReadFull(r, payload[:]); err != nil {
 			return types.Message{}, err
 		}
-		msg = types.Message{
-			Length:   length,
-			Msg_type: msg_type,
-			Payload:  payload,
-		}
-		return msg, err
+		msg.Payload = payload
 	}
-	return types.Message{}, err
+
+	return msg, nil
 }
 
 func (client *Client) message_handler() {
 	msg, err := client.read_message()
 	if err != nil {
+		log.Print(err)
 		if err == io.EOF {
 			client.conn.Close()
 			//	log.Printf("Connection to the client %d is closed", client.id)
@@ -332,10 +281,9 @@ func (client *Client) message_handler() {
 		}
 	case HEARTBEAT:
 		{
+			log.Print("heartbeat")
 
-			Worker_map.Mu.Lock()
-			val, ok := Worker_map.List[client.id]
-			Worker_map.Mu.Unlock()
+			ok := Present_in_set(client.id)
 			now, _ := strconv.ParseFloat(string(msg.Payload), 64)
 			if !ok {
 				err := client.send(HEARTBEAT, []byte("0"))
@@ -345,17 +293,11 @@ func (client *Client) message_handler() {
 				break
 			}
 			Update_score(client.id, now)
-			Worker_map.Mu.Lock()
-			val.Last_ping = time.Now().UTC().UnixMilli()
-			Worker_map.Mu.Unlock()
-
 		}
 
 	case TACK:
 		{
-
-			Worker_map.Mu.Lock()
-			//worker, _ := Worker_map.List[client.id]
+			log.Print("TACK")
 			ok := Present_in_set(client.id)
 			if !ok {
 				err := client.send(TACK, []byte("0"))
@@ -365,24 +307,12 @@ func (client *Client) message_handler() {
 				break
 			}
 			worker := Fetch_worker(client.id)
-			Worker_map.Mu.Unlock()
+
 			if string(msg.Payload) == "1" {
-				//log.Print("ack")
-				ACK_channel <- worker["Job_id"]
+				log.Print(worker)
+				ACK_channel <- worker["job_id"]
 			}
-			// } else {
-			// 	Worker_map.Mu.Lock()
-			// 	workerr, ok := Worker_map.List[client.id]
-			// 	if ok {
-			// 		worker["Job_id"] = ""
 
-			// 	Worker_map.Mu.Unlock()
-
-			// }
-			// worker["Job_id"] = ""
-			// last_ping, _ := strconv.ParseInt(worker["Last_ping"], 10, 64)
-			// var new_data *types.Worker = &types.Worker{ID: worker["ID"], Job_id: worker["Job_id"], Last_ping: last_ping}
-			// Add_to_map(new_data)
 			Remove_worker_from_map(client.id)
 			//remove the worker from the map as well if they dopnt have job
 			err := client.send(TACK, []byte("1"))

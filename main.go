@@ -1,4 +1,5 @@
 package main
+
 import (
 	"fmt"
 	"log"
@@ -16,9 +17,10 @@ func main() {
 	godotenv.Load()
 	utils.Conf, utils.RedConf = utils.LoadConfig()
 	log.Print("redis addr", utils.Conf)
-
+	utils.StartIngester()
 	go utils.Acker()
-	go utils.Reply_to_producer()
+	go utils.Consumer_deleter()
+	//	go utils.Reply_to_producer()
 	router := gin.New()
 	router.Use(gin.Recovery())
 
