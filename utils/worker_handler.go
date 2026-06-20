@@ -199,8 +199,8 @@ func (s *Server) check_heartbeat() {
 			val.quitch <- struct{}{}
 			delete(s.clients, dead)
 			val.mu.Unlock()
-
-			Del_consumer([]string{dead})
+			Del_channel <- dead
+			//Del_consumer([]string{dead})
 		}
 
 	}
@@ -223,7 +223,7 @@ func (client *Client) send(kind byte, payload []byte) error {
 }
 
 func (client *Client) read_message() (msg types.Message, err error) {
-	log.Print("read message")
+	//log.Print("read message")
 	var len_buf [4]byte
 	var r io.Reader = client.conn
 
@@ -281,7 +281,7 @@ func (client *Client) message_handler() {
 		}
 	case HEARTBEAT:
 		{
-			log.Print("heartbeat")
+			//log.Print("heartbeat")
 
 			ok := Present_in_set(client.id)
 			now, _ := strconv.ParseFloat(string(msg.Payload), 64)

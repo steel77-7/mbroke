@@ -83,39 +83,19 @@ func StartIngester() {
 func ACK(ids []string) bool {
 	log.Print("int he ack ")
 
-	if err := Redis.XAck(CTX, Conf.StreamName, Conf.ConsumerGroupName, ids...).Err(); err == nil {
-		for _, id := range ids {
-			// 	val, errr := Redis.XRange(CTX, Conf.StreamName, id, id).Result()
-			// 	if errr != nil {
-			// 		log.Print("int he ack ", err)
-			// 	}
-			// 	if len(val) == 0 {
-			// 		continue
-			// 	}
-			// 	m := val[0].Values["metadata"]
-			// 	raw, ok := m.(string)
-			// 	if !ok {
-			// 		return false
-			// 	}
-			// 	var meta types.Metadata
-			// 	err1 := json.Unmarshal([]byte(raw), &meta)
-			// 	if err1 != nil {
-			// 		return false
-			// 	}
-			// 	err2 := Redis.HSet(CTX, meta.ID, "state", true).Err()
-			// 	if err2 != nil {
-			// 		return false
-			// 	}
-			// 	//log.Print("int hre acker", meta.ID)
-
-			// 	//	Add_to_queue(meta.ID)
-			Redis.XDel(CTX, Conf.StreamName, id)
-
-			// 	return true
-
-		}
+	if count, err := Redis.XAck(CTX, Conf.StreamName, Conf.ConsumerGroupName, ids...).Result(); err == nil {
+		// for _, id := range ids {
+		// 	Redis.XDel(CTX, Conf.StreamName, id)
+		// 	return true
+		// }
+		log.Print("Count:  of ack : ", count)
+		Redis.XDel(CTX, Conf.StreamName, ids...)
+		return true
+	} else {
+		log.Print(err)
+		return false
 	}
-	return false
+
 }
 
 func Del_consumer(ids []string) {
@@ -127,16 +107,11 @@ func Del_consumer(ids []string) {
 	if err != nil {
 		log.Print("Couldnt delte the consuemr")
 	}
-	// for _, id := range ids {
-	// 	_, err := Redis.XGroupDelConsumer(CTX, Conf.StreamName, Conf.ConsumerGroupName, id).Result()
-	// 	if err != nil {
-	// 		log.Print("Consumer not deleted", err)
-	// 	}
-	// }
+
 }
 
 func Consumer_deleter() {
-	ticker := time.NewTicker(10 * time.Millisecond)
+	ticker := time.NewTicker(700 * time.Millisecond)
 	defer ticker.Stop()
 	var batch []string
 
@@ -155,7 +130,7 @@ func Consumer_deleter() {
 }
 
 func Acker() {
-	ticker := time.NewTicker(10 * time.Millisecond)
+	ticker := time.NewTicker(700 * time.Millisecond)
 	defer ticker.Stop()
 
 	var batch []string
@@ -182,7 +157,7 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 		Idle:   time.Duration(Conf.IdleTime) * time.Millisecond,
 		Start:  "-",
 		End:    "+",
-		Count:  10,
+		Count:  100,
 	}).Result()
 
 	//log.Print("1")
@@ -196,7 +171,7 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 			if len(tp) == 0 {
 				continue
 			}
-			ACK_channel <- p.ID //ack it first
+			//ACK_channel <- p.ID //ack it first
 
 			_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
 				Stream: Conf.DeadLetterName,
@@ -206,27 +181,6 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 				log.Print("Couldnt push into the dead end queue: ", err)
 			}
 
-			// val, _ := Redis.XRange(CTX, Conf.StreamName, id, id).Result()
-			// if len(val) == 0 {
-			// 	return nil
-			// }
-			// m := val[0].Values["metadata"]
-			// raw, ok := m.(string)
-			// if !ok {
-			// 	return nil
-			// }
-			// var meta types.Metadata
-			// errr := json.Unmarshal([]byte(raw), &meta)
-			// if errr != nil {
-			// 	log.Print(errr)
-			// 	return nil
-			// }
-			// err3 := Redis.HSet(CTX, meta.ID, "state", false).Err()
-			// if err3 != nil {
-			// 	log.Print(err3)
-
-			// 	return nil
-			// }
 			_, err2 := Redis.XDel(CTX, Conf.StreamName, p.ID).Result()
 			if err2 != nil {
 				log.Print("Couldnt push into the dead end queue: ", err)
@@ -235,12 +189,11 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 			continue
 		}
 
-		Worker_map.Mu.Lock()
-		val, ok := Worker_map.List[p.Consumer]
-		Worker_map.Mu.Unlock()
-
-		if (!ok) || (ok && val.Job_id != p.ID) { //problem is here......too much duplication
-			if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
+		//alternative :
+		ok := Present_in_set(p.Consumer)
+		has_job := Fetch_worker(p.Consumer)
+		if (!ok) || (ok && len(has_job) > 0) || (ok && has_job["job_id"] != p.ID) {
+			if p.Idle > time.Duration(Conf.IdleTime) {
 				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
 					Stream:   Conf.StreamName,
 					Group:    Conf.ConsumerGroupName,
@@ -256,14 +209,31 @@ func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker fe
 				}
 			}
 		}
+		// if (!ok) || (ok && val.Job_id != p.ID) { //problem is here......too much duplication
+		// 	if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
+		// 		claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
+		// 			Stream:   Conf.StreamName,
+		// 			Group:    Conf.ConsumerGroupName,
+		// 			Consumer: id,
+		// 			Messages: []string{p.ID},
+		// 		}).Result()
+		// 		if err != nil {
+		// 			log.Print("COuldnt claim the job")
+		// 			return nil
+		// 		}
+		// 		if len(claimed) > 0 {
+		// 			return &claimed[0]
+		// 		}
+		// 	}
+		// }
 	}
 
 	if err != nil {
-		log.Print("Coudn't read values from redis [Feed to the broker]:%v ", err)
+		log.Printf("Coudn't read values from redis [Feed to the broker]:%v ", err)
 		//log.Fatal("crased in feed to worker")
 		return nil
 	}
-
+	//this is for the new messages
 	args := &redis.XReadGroupArgs{
 		Streams:  []string{Conf.StreamName, ">"},
 		Group:    Conf.ConsumerGroupName,
@@ -379,8 +349,8 @@ func Present_in_set(id string) bool {
 	if errors.Is(err, redis.Nil) {
 		return false
 	} else if err != nil {
-		log.Fatal("[PRESENT IN SET] ", err)
-
+		log.Print("[PRESENT IN SET] ", err)
+		return false
 	}
 	return true
 
@@ -390,13 +360,15 @@ func Remove_from_set(id string) {
 
 	_, err := Redis.ZRem(CTX, setName, id).Result()
 	if err != nil {
-		log.Fatal("[REMOVE FORM SET]", err)
+		log.Print("[REMOVE FORM SET]", err)
+		return
 	}
 }
 func Fetch_dead_workers(time float64) []string {
 	res, err := Redis.ZRangeByScore(CTX, setName, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%f", time)}).Result()
 	if err != nil {
-		log.Fatal("[IN THE FETCH DEAD WORKERs] COULDNT FETCH WORKER", err)
+		log.Print("[IN THE FETCH DEAD WORKERs] COULDNT FETCH WORKER", err)
+		return make([]string, 0)
 	}
 	return res
 
@@ -410,12 +382,14 @@ func Add_to_map(worker *types.Worker) {
 	}
 	log.Print("WORker added to the map : ", worker.ID)
 }
-func Remove_worker_from_map(id string) {
+func Remove_worker_from_map(id string) error {
 	log.Print("Removed from the map :", id)
 	_, err := Redis.Del(CTX, "worker:"+id).Result()
 	if err != nil {
-		log.Fatal("[REMOVE FROM WORKER MAP] Couldnt remove the worker: ", err)
+		log.Print("[REMOVE FROM WORKER MAP] Couldnt remove the worker: ", err)
+		return err
 	}
+	return nil
 }
 func Check_worker_if_present(id string) bool {
 	exists, err := Redis.SIsMember(CTX, setName, id).Result()
@@ -438,7 +412,8 @@ func Worker_map_len() int64 {
 func Fetch_worker(id string) map[string]string {
 	res, err := Redis.HGetAll(CTX, "worker:"+id).Result()
 	if err != nil {
-		log.Fatal("[IN THE FETCH WORKER] Couldnt fetch the worker")
+		log.Print("[IN THE FETCH WORKER] Couldnt fetch the worker")
+		return nil
 	}
 	return res
 }
