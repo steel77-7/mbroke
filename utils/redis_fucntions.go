@@ -149,109 +149,213 @@ func Acker() {
 	}
 }
 
-func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker feeding
-
-	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
-		Stream: Conf.StreamName,
-		Group:  Conf.ConsumerGroupName,
-		Idle:   time.Duration(Conf.IdleTime) * time.Millisecond,
-		Start:  "-",
-		End:    "+",
-		Count:  100,
-	}).Result()
-
-	//log.Print("1")
-
-	for _, p := range to_claim {
-		if p.RetryCount > Conf.RetryCount {
-			tp, err := Redis.XRange(CTX, Conf.StreamName, p.ID, p.ID).Result()
-			if err != nil {
-				log.Print("Couldnt push into the dead end queue: ", err)
-			}
-			if len(tp) == 0 {
-				continue
-			}
-			//ACK_channel <- p.ID //ack it first
-
-			_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
-				Stream: Conf.DeadLetterName,
-				Values: tp[0].Values,
-			}).Result()
-			if err1 != nil {
-				log.Print("Couldnt push into the dead end queue: ", err)
-			}
-
-			_, err2 := Redis.XDel(CTX, Conf.StreamName, p.ID).Result()
-			if err2 != nil {
-				log.Print("Couldnt push into the dead end queue: ", err)
-			}
-			//Add_to_queue(meta.ID)
-			continue
+func Dead_letter(jobs []redis.XMessage) {
+	pipe := Redis.Pipeline()
+	for _, job := range jobs {
+		tbs := map[string]interface{}{
+			"metadata": job.Metadata,
+			"data":     job.Data,
 		}
-
-		//alternative :
-		ok := Present_in_set(p.Consumer)
-		has_job := Fetch_worker(p.Consumer)
-		if (!ok) || (ok && len(has_job) > 0) || (ok && has_job["job_id"] != p.ID) {
-			if p.Idle > time.Duration(Conf.IdleTime) {
-				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
-					Stream:   Conf.StreamName,
-					Group:    Conf.ConsumerGroupName,
-					Consumer: id,
-					Messages: []string{p.ID},
-				}).Result()
-				if err != nil {
-					log.Print("COuldnt claim the job")
-					return nil
-				}
-				if len(claimed) > 0 {
-					return &claimed[0]
-				}
-			}
-		}
-		// if (!ok) || (ok && val.Job_id != p.ID) { //problem is here......too much duplication
-		// 	if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
-		// 		claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
-		// 			Stream:   Conf.StreamName,
-		// 			Group:    Conf.ConsumerGroupName,
-		// 			Consumer: id,
-		// 			Messages: []string{p.ID},
-		// 		}).Result()
-		// 		if err != nil {
-		// 			log.Print("COuldnt claim the job")
-		// 			return nil
-		// 		}
-		// 		if len(claimed) > 0 {
-		// 			return &claimed[0]
-		// 		}
-		// 	}
-		// }
+		pipe.XAdd(CTX, &redis.XAddArgs{
+			Stream: Conf.DeadLetterName,
+			Values: tbs,
+		})
 	}
-
+	_, err := pipe.Exec(CTX)
 	if err != nil {
-		log.Printf("Coudn't read values from redis [Feed to the broker]:%v ", err)
-		//log.Fatal("crased in feed to worker")
-		return nil
+		log.Print("Couldnt push into deadletter:", err)
+		return
 	}
-	//this is for the new messages
-	args := &redis.XReadGroupArgs{
-		Streams:  []string{Conf.StreamName, ">"},
-		Group:    Conf.ConsumerGroupName,
-		Consumer: id,
-		Count:    1,
-		Block:    100 * time.Millisecond,
-	}
-	res, err1 := Redis.XReadGroup(CTX, args).Result()
-	// if err1 != nil {
-
-	// 	return nil
-	// }
-	if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
-		return nil
-	}
-	return &res[0].Messages[0]
 }
 
+func Dead_letter_scan() {
+	ticker := time.NewTicker(1000 * time.Millisecond)
+	defer ticker.Stop()
+	var batch []redis.XMessage
+	pipe := Redis.Pipeline()
+	for {
+		select {
+			case <-ticker.C:
+				Dead_letter(batch)
+				batch = nil
+			default:
+			to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
+				Stream: Conf.StreamName,
+				Group:  Conf.ConsumerGroupName,
+				Idle:   time.Duration(Conf.IdleTime) * time.Millisecond,
+				Start:  "-",
+				End:    "+",
+				Count:  1000,
+			}).Result()
+			if err!= nil{
+				log.Print("Couldnt fetch pending jobs")
+				continue
+			}
+			for _,job :=range to_claim{
+				if job.RetryCount >Conf.RetryCount{
+					pipe.XRange(CTX , Conf.StreamName, job.id , job.id)
+				}
+			}
+			cmds , err1:= pipe.Exec(CTX)
+			if err1!= nil{
+				log.Print("Couldnt fetch dead jobs")
+				continue
+			}
+			//var results []redis.XMessage
+			for _, cmd := range cmds {
+					msgs, _ := cmd.(*redis.XSliceCmd).Result()
+					if len(msgs) > 0 {
+						batch = append(batch, msgs[0])
+					}
+			}
+		}
+	}
+}
+// func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker feeding
+
+// 	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
+// 		Stream: Conf.StreamName,
+// 		Group:  Conf.ConsumerGroupName,
+// 		Idle:   time.Duration(Conf.IdleTime) * time.Millisecond,
+// 		Start:  "-",
+// 		End:    "+",
+// 		Count:  100,
+// 	}).Result()
+
+// 	//log.Print("1")
+
+// 	for _, p := range to_claim {
+// 		if p.RetryCount > Conf.RetryCount {
+// 			tp, err := Redis.XRange(CTX, Conf.StreamName, p.ID, p.ID).Result()
+// 			if err != nil {
+// 				log.Print("Couldnt push into the dead end queue: ", err)
+// 			}
+// 			if len(tp) == 0 {
+// 				continue
+// 			}
+// 			//ACK_channel <- p.ID //ack it first
+
+// 			_, err1 := Redis.XAdd(CTX, &redis.XAddArgs{
+// 				Stream: Conf.DeadLetterName,
+// 				Values: tp[0].Values,
+// 			}).Result()
+// 			if err1 != nil {
+// 				log.Print("Couldnt push into the dead end queue: ", err)
+// 			}
+
+// 			_, err2 := Redis.XDel(CTX, Conf.StreamName, p.ID).Result()
+// 			if err2 != nil {
+// 				log.Print("Couldnt push into the dead end queue: ", err)
+// 			}
+// 			//Add_to_queue(meta.ID)
+// 			continue
+// 		}
+
+// 		//alternative :
+// 		ok := Present_in_set(p.Consumer)
+// 		has_job := Fetch_worker(p.Consumer)
+// 		if (!ok) || (ok && len(has_job) > 0) || (ok && has_job["job_id"] != p.ID) {
+// 			if p.Idle > time.Duration(Conf.IdleTime) {
+// 				claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
+// 					Stream:   Conf.StreamName,
+// 					Group:    Conf.ConsumerGroupName,
+// 					Consumer: id,
+// 					Messages: []string{p.ID},
+// 				}).Result()
+// 				if err != nil {
+// 					log.Print("COuldnt claim the job")
+// 					return nil
+// 				}
+// 				if len(claimed) > 0 {
+// 					return &claimed[0]
+// 				}
+// 			}
+// 		}
+// 		// if (!ok) || (ok && val.Job_id != p.ID) { //problem is here......too much duplication
+// 		// 	if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
+// 		// 		claimed, err := Redis.XClaim(CTX, &redis.XClaimArgs{
+// 		// 			Stream:   Conf.StreamName,
+// 		// 			Group:    Conf.ConsumerGroupName,
+// 		// 			Consumer: id,
+// 		// 			Messages: []string{p.ID},
+// 		// 		}).Result()
+// 		// 		if err != nil {
+// 		// 			log.Print("COuldnt claim the job")
+// 		// 			return nil
+// 		// 		}
+// 		// 		if len(claimed) > 0 {
+// 		// 			return &claimed[0]
+// 		// 		}
+// 		// 	}
+// 		// }
+// 	}
+
+// 	if err != nil {
+// 		log.Printf("Coudn't read values from redis [Feed to the broker]:%v ", err)
+// 		//log.Fatal("crased in feed to worker")
+// 		return nil
+// 	}
+// 	//this is for the new messages
+// 	args := &redis.XReadGroupArgs{
+// 		Streams:  []string{Conf.StreamName, ">"},
+// 		Group:    Conf.ConsumerGroupName,
+// 		Consumer: id,
+// 		Count:    1,
+// 		Block:    100 * time.Millisecond,
+// 	}
+// 	res, err1 := Redis.XReadGroup(CTX, args).Result()
+
+// 	if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
+// 		return nil
+// 	}
+// 	return &res[0].Messages[0]
+// }
+
+
+func Feed_to_worker(){
+	ticker:= time.NewTicker(Conf.IdleTime * time.Millisecond)
+	defer ticker.Close()
+	start_id := "0-0"
+	for{
+		select{
+			case <-ticker.C:
+				id:=<-Worker_inquiry_channel
+
+					args := &redis.XReadGroupArgs{
+						Streams:  []string{Conf.StreamName, ">"},
+						Group:    Conf.ConsumerGroupName,
+						Consumer: id,
+						Count:    1,
+						Block:    100 * time.Millisecond,
+					}
+				res, err1 := Redis.XReadGroup(CTX, args).Result()
+				if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
+					return nil
+				}
+				Worker_feeder_channel<-types.WorkerFeeding{Data:&res[0].Messages[0] ,ID:id}
+			default :
+				id:=<-Worker_inquiry_channel
+				ok:= Present_int_set(id)
+				has_job:= Fetch_worker(id)
+			 if (!ok) || (ok && val.Job_id != p.ID) {
+				if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
+				msgs, next_id, err := Redis.XAutoClaim(CTX, &redis.XAutoClaimArgs{
+							Stream:   Conf.StreamName,
+							Group:    Conf.ConsumerGroupName,
+							Consumer: id,
+							MinIdle:  Conf.IdleTime,
+							Start:    start_id,
+							Count:    1,
+
+				}
+				if err!= nil{
+					log.Print("Couldnt claim a job :")
+					continue
+				}
+				start_id = next_id
+				Worker_feeder_channel<-types.WorkerFeeding{Data:msg.Values, ID:id}
+	}
+}
 func Add_into_dict(data types.Metadata) error {
 	err := Redis.HSet(CTX, data.ID, "id", data.ID, "state", strconv.FormatBool(data.State), "url", data.Url).Err()
 	if err != nil {

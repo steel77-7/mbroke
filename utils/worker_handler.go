@@ -178,6 +178,20 @@ func (s *Server) read_loop(conn net.Conn) {
 	}
 }
 
+
+func(s * Server) Worker_feeder(){
+	ticker := time.NewTicker(10* time.Millisecond)
+	defer ticker.Close()
+	var payload types.WorkerFeeding
+	for t:= range ticker.C{
+		payload = <-Worker_feeder_channel
+		s.mu.Lock()
+		val, ok:=s.clients[payload.ID]
+		s.mu.Unlock()
+		if ok
+
+	}
+}
 func (s *Server) check_heartbeat() {
 
 	for {

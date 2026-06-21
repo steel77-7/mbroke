@@ -15,7 +15,10 @@ type Ack_request struct {
 	ID  string `json:"id"`
 	ACK bool   `json:"ack"`
 }
-
+type WorkerFeeding struct{
+	ID string `json:"id"`
+	Data map[string]interface `json:"data"`
+}
 type Worker struct {
 	ID        string `json:"id" redis:"id"`
 	Job_id    string `json:"job_id" redis:"job_id"`
