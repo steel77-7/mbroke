@@ -185,10 +185,29 @@ func(s * Server) Worker_feeder(){
 	var payload types.WorkerFeeding
 	for t:= range ticker.C{
 		payload = <-Worker_feeder_channel
+		id:= payload.ID
+		ok:=Present_in_set(id)
 		s.mu.Lock()
-		val, ok:=s.clients[payload.ID]
+		val, _:=s.clients[id]
 		s.mu.Unlock()
-		if ok
+		if ok {
+			worker := Fetch_worker(id)
+			new_worker := &types.Worker{
+				ID:        id,
+				Job_id:    payload.Data.ID,
+				Last_ping: time.Now().UTC().UnixMilli(),
+			}
+			Add_to_map(new_worker)
+			tbs, _ := json.Marshal(job.Values["data"])
+			val.mu.Lock()
+
+			err := val.send(PULL, []byte(tbs))
+			if err != nil {
+				log.Print("couldnt send the pull res", err)
+			}
+			val.mu.Unlock()
+
+		}
 
 	}
 }
@@ -300,10 +319,13 @@ func (client *Client) message_handler() {
 			ok := Present_in_set(client.id)
 			now, _ := strconv.ParseFloat(string(msg.Payload), 64)
 			if !ok {
+				client.mu.Lock()
 				err := client.send(HEARTBEAT, []byte("0"))
 				if err != nil {
 					log.Print("couldnt send the heartbeat res")
 				}
+				client.mu.Unlock()
+
 				break
 			}
 			Update_score(client.id, now)
@@ -314,10 +336,14 @@ func (client *Client) message_handler() {
 			log.Print("TACK")
 			ok := Present_in_set(client.id)
 			if !ok {
+				client.mu.Lock()
+
 				err := client.send(TACK, []byte("0"))
 				if err != nil {
 					log.Print("couldnt send data")
 				}
+				client.mu.Unlock()
+
 				break
 			}
 			worker := Fetch_worker(client.id)
@@ -329,38 +355,48 @@ func (client *Client) message_handler() {
 
 			Remove_worker_from_map(client.id)
 			//remove the worker from the map as well if they dopnt have job
+			client.mu.Lock()
+
 			err := client.send(TACK, []byte("1"))
 			if err != nil {
 				log.Print("couldnt send the tack res")
 			}
+			client.mu.Unlock()
+
 
 		}
 	case PULL:
 		{
 			log.Print("pull")
-			job := Feed_to_worker(client.id)
-			if job == nil {
-				client.send(PULL, []byte("0"))
-				break
-			}
-			worker := &types.Worker{
-				ID:        client.id,
-				Job_id:    job.ID,
-				Last_ping: time.Now().UTC().UnixMilli(),
-			}
-			Add_to_map(worker)
-			tbs, _ := json.Marshal(job.Values["data"])
-			err := client.send(PULL, []byte(tbs))
-			if err != nil {
-				log.Print("couldnt send the pull res", err)
-			}
+			Worker_inquiry_channel <- client.id
+			// job := Feed_to_worker(client.id)
+			// if job == nil {
+			// 	client.send(PULL, []byte("0"))
+			// 	break
+			// }
+			// worker := &types.Worker{
+			// 	ID:        client.id,
+			// 	Job_id:    job.ID,
+			// 	Last_ping: time.Now().UTC().UnixMilli(),
+			// }
+			// Add_to_map(worker)
+			// tbs, _ := json.Marshal(job.Values["data"])
+			// err := client.send(PULL, []byte(tbs))
+			// if err != nil {
+			// 	log.Print("couldnt send the pull res", err)
+			// }
+
 		}
 	default:
 		{
+			client.mu.Lock()
+
 			err := client.send(INVALID, []byte("0"))
 			if err != nil {
 				log.Print("couldnt send the invalid res")
 			}
+			client.mu.Unlock()
+
 		}
 	}
 }
