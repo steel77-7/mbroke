@@ -3,6 +3,8 @@ package types
 import (
 	"encoding/json"
 	"sync"
+
+	"github.com/redis/go-redis/v9"
 	// "github.com/mbroke/types"
 )
 
@@ -15,9 +17,9 @@ type Ack_request struct {
 	ID  string `json:"id"`
 	ACK bool   `json:"ack"`
 }
-type WorkerFeeding struct{
-	ID string `json:"id"`
-	Data map[string]interface `json:"data"`
+type WorkerFeeding struct {
+	ID   string         `json:"id"`
+	Data redis.XMessage `json:"data"`
 }
 type Worker struct {
 	ID        string `json:"id" redis:"id"`

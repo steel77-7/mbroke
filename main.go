@@ -17,9 +17,7 @@ func main() {
 	godotenv.Load()
 	utils.Conf, utils.RedConf = utils.LoadConfig()
 	log.Print("redis addr", utils.Conf)
-	utils.StartIngester()
-	go utils.Acker()
-	go utils.Consumer_deleter()
+
 	//	go utils.Reply_to_producer()
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -33,6 +31,13 @@ func main() {
 		}
 	}()
 	utils.Redis_init()
+	utils.StartIngester()
+	go utils.Acker()
+	go utils.Consumer_deleter()
+	go utils.Dead_letter_scan()
+	go utils.Feed_to_worker()
+	//go utils.Pending_jobs()
+
 	server := &http.Server{
 		Addr:           ":" + fmt.Sprint(utils.Conf.Port),
 		Handler:        router,

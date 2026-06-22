@@ -81,14 +81,14 @@ func StartIngester() {
 	}()
 }
 func ACK(ids []string) bool {
-	log.Print("int he ack ")
+	//log.Print("int he ack ")
 
-	if count, err := Redis.XAck(CTX, Conf.StreamName, Conf.ConsumerGroupName, ids...).Result(); err == nil {
+	if _, err := Redis.XAck(CTX, Conf.StreamName, Conf.ConsumerGroupName, ids...).Result(); err == nil {
 		// for _, id := range ids {
 		// 	Redis.XDel(CTX, Conf.StreamName, id)
 		// 	return true
 		// }
-		log.Print("Count:  of ack : ", count)
+		//log.Print("Count:  of ack : ", count)
 		Redis.XDel(CTX, Conf.StreamName, ids...)
 		return true
 	} else {
@@ -130,7 +130,7 @@ func Consumer_deleter() {
 }
 
 func Acker() {
-	ticker := time.NewTicker(700 * time.Millisecond)
+	ticker := time.NewTicker(2000 * time.Millisecond)
 	defer ticker.Stop()
 
 	var batch []string
@@ -152,14 +152,15 @@ func Acker() {
 func Dead_letter(jobs []redis.XMessage) {
 	pipe := Redis.Pipeline()
 	for _, job := range jobs {
-		tbs := map[string]interface{}{
-			"metadata": job.Metadata,
-			"data":     job.Data,
-		}
+		// tbs := map[string]interface{}{
+		// 	"metadata": job.Metadata,
+		// 	"data":     job.Data,
+		// }
 		pipe.XAdd(CTX, &redis.XAddArgs{
 			Stream: Conf.DeadLetterName,
-			Values: tbs,
+			Values: job.Values,
 		})
+		ACK_channel <- job.ID
 	}
 	_, err := pipe.Exec(CTX)
 	if err != nil {
@@ -175,10 +176,10 @@ func Dead_letter_scan() {
 	pipe := Redis.Pipeline()
 	for {
 		select {
-			case <-ticker.C:
-				Dead_letter(batch)
-				batch = nil
-			default:
+		case <-ticker.C:
+			Dead_letter(batch)
+			batch = nil
+		default:
 			to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
 				Stream: Conf.StreamName,
 				Group:  Conf.ConsumerGroupName,
@@ -187,30 +188,31 @@ func Dead_letter_scan() {
 				End:    "+",
 				Count:  1000,
 			}).Result()
-			if err!= nil{
+			if err != nil {
 				log.Print("Couldnt fetch pending jobs")
 				continue
 			}
-			for _,job :=range to_claim{
-				if job.RetryCount >Conf.RetryCount{
-					pipe.XRange(CTX , Conf.StreamName, job.id , job.id)
+			for _, job := range to_claim {
+				if job.RetryCount > Conf.RetryCount {
+					pipe.XRange(CTX, Conf.StreamName, job.ID, job.ID)
 				}
 			}
-			cmds , err1:= pipe.Exec(CTX)
-			if err1!= nil{
+			cmds, err1 := pipe.Exec(CTX)
+			if err1 != nil {
 				log.Print("Couldnt fetch dead jobs")
 				continue
 			}
 			//var results []redis.XMessage
 			for _, cmd := range cmds {
-					msgs, _ := cmd.(*redis.XSliceCmd).Result()
-					if len(msgs) > 0 {
-						batch = append(batch, msgs[0])
-					}
+				msgs, _ := cmd.(*redis.XMessageSliceCmd).Result()
+				if len(msgs) > 0 {
+					batch = append(batch, msgs[0])
+				}
 			}
 		}
 	}
 }
+
 // func Feed_to_worker(id string) *redis.XMessage { //this will be in the worker feeding
 
 // 	to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
@@ -311,51 +313,127 @@ func Dead_letter_scan() {
 // 	return &res[0].Messages[0]
 // }
 
+// func Feed_to_worker() {
+// 	ticker := time.NewTicker(100 * time.Millisecond)
+// 	defer ticker.Stop()
+// 	start_id := "0-0"
+// 	for {
 
-func Feed_to_worker(){
-	ticker:= time.NewTicker(Conf.IdleTime * time.Millisecond)
-	defer ticker.Close()
+// 		select {
+// 		case <-ticker.C:
+// 			//log.Print("Worker chan len:", len(Worker_inquiry_channel))
+
+// 			id := <-Worker_inquiry_channel
+
+// 			args := &redis.XReadGroupArgs{
+// 				Streams:  []string{Conf.StreamName, ">"},
+// 				Group:    Conf.ConsumerGroupName,
+// 				Consumer: id,
+// 				Count:    1,
+// 				//	Block:    50 * time.Millisecond,
+// 			}
+// 			res, err1 := Redis.XReadGroup(CTX, args).Result()
+// 			if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
+// 				Worker_inquiry_channel <- id
+// 				continue
+// 			}
+// 			Worker_feeder_channel <- types.WorkerFeeding{Data: res[0].Messages[0], ID: id}
+
+// 		default:
+// 			//log.Print("Worker chan len:", len(Worker_inquiry_channel))
+
+// 			id := <-Worker_inquiry_channel
+// 			//ok := Present_int_set(id)
+// 			//has_job := Fetch_worker(id)
+// 			// if (!ok) || (ok && val.Job_id != p.ID) {
+// 			// //	if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
+
+// 			msg, next_id, err := Redis.XAutoClaim(CTX, &redis.XAutoClaimArgs{
+// 				Stream:   Conf.StreamName,
+// 				Group:    Conf.ConsumerGroupName,
+// 				Consumer: id,
+// 				MinIdle:  time.Duration(Conf.IdleTime) * time.Second,
+// 				Start:    start_id,
+// 				Count:    1}).Result()
+
+// 			if err != nil {
+// 				log.Print("Couldnt claim a job :")
+// 				Worker_inquiry_channel <- id
+// 				continue
+// 			}
+// 			if len(msg) == 0 {
+// 				Worker_inquiry_channel <- id
+// 				continue
+// 			}
+// 			start_id = next_id
+// 			Worker_feeder_channel <- types.WorkerFeeding{Data: msg[0], ID: id}
+
+// 		}
+
+//		}
+//	}
+func Pending_jobs() {
+	ticker := time.NewTicker(1000 * time.Millisecond)
+	defer ticker.Stop()
 	start_id := "0-0"
-	for{
-		select{
-			case <-ticker.C:
-				id:=<-Worker_inquiry_channel
+	for range ticker.C {
+		id := <-Worker_inquiry_channel
+		//ok := Present_int_set(id)
+		//has_job := Fetch_worker(id)
+		// if (!ok) || (ok && val.Job_id != p.ID) {
+		// //	if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
 
-					args := &redis.XReadGroupArgs{
-						Streams:  []string{Conf.StreamName, ">"},
-						Group:    Conf.ConsumerGroupName,
-						Consumer: id,
-						Count:    1,
-						Block:    100 * time.Millisecond,
-					}
-				res, err1 := Redis.XReadGroup(CTX, args).Result()
-				if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
-					return nil
-				}
-				Worker_feeder_channel<-types.WorkerFeeding{Data:&res[0].Messages[0] ,ID:id}
-			default :
-				id:=<-Worker_inquiry_channel
-				ok:= Present_int_set(id)
-				has_job:= Fetch_worker(id)
-			 if (!ok) || (ok && val.Job_id != p.ID) {
-				if (p.Idle * time.Duration(p.RetryCount)) > (time.Duration(p.RetryCount) * time.Duration(Conf.IdleTime)) {
-				msgs, next_id, err := Redis.XAutoClaim(CTX, &redis.XAutoClaimArgs{
-							Stream:   Conf.StreamName,
-							Group:    Conf.ConsumerGroupName,
-							Consumer: id,
-							MinIdle:  Conf.IdleTime,
-							Start:    start_id,
-							Count:    1,
+		msg, next_id, err := Redis.XAutoClaim(CTX, &redis.XAutoClaimArgs{
+			Stream:   Conf.StreamName,
+			Group:    Conf.ConsumerGroupName,
+			Consumer: id,
+			MinIdle:  time.Duration(Conf.IdleTime) * time.Second,
+			Start:    start_id,
+			Count:    1}).Result()
 
-				}
-				if err!= nil{
-					log.Print("Couldnt claim a job :")
-					continue
-				}
-				start_id = next_id
-				Worker_feeder_channel<-types.WorkerFeeding{Data:msg.Values, ID:id}
+		if err != nil {
+			log.Print("Couldnt claim a job :")
+			Worker_inquiry_channel <- id
+			continue
+		}
+		if len(msg) == 0 {
+			Worker_inquiry_channel <- id
+			continue
+		}
+		start_id = next_id
+		Worker_feeder_channel <- types.WorkerFeeding{Data: msg[0], ID: id}
 	}
 }
+func Feed_to_worker() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		id := <-Worker_inquiry_channel
+		start := time.Now()
+
+		args := &redis.XReadGroupArgs{
+			Streams:  []string{Conf.StreamName, ">"},
+			Group:    Conf.ConsumerGroupName,
+			Consumer: id,
+			Count:    1,
+			//	Block:    50 * time.Millisecond,
+		}
+		res, err1 := Redis.XReadGroup(CTX, args).Result()
+		if err1 != nil || len(res) == 0 || len(res[0].Messages) == 0 {
+			Worker_inquiry_channel <- id
+			continue
+		}
+		Worker_feeder_channel <- types.WorkerFeeding{Data: res[0].Messages[0], ID: id}
+		duration := time.Since(start)
+		if duration > 10*time.Millisecond {
+			log.Println("send", duration)
+		}
+
+	}
+
+}
+
 func Add_into_dict(data types.Metadata) error {
 	err := Redis.HSet(CTX, data.ID, "id", data.ID, "state", strconv.FormatBool(data.State), "url", data.Url).Err()
 	if err != nil {
@@ -460,7 +538,7 @@ func Present_in_set(id string) bool {
 
 }
 func Remove_from_set(id string) {
-	log.Print("Removed from the set :", id)
+	//log.Print("Removed from the set :", id)
 
 	_, err := Redis.ZRem(CTX, setName, id).Result()
 	if err != nil {
@@ -484,10 +562,9 @@ func Add_to_map(worker *types.Worker) {
 		log.Print("[ADD TO MAP] Cannot add to map : ", worker.ID, "\n", err)
 		return
 	}
-	log.Print("WORker added to the map : ", worker.ID)
+	//log.Print("WORker added to the map : ", worker.ID)
 }
 func Remove_worker_from_map(id string) error {
-	log.Print("Removed from the map :", id)
 	_, err := Redis.Del(CTX, "worker:"+id).Result()
 	if err != nil {
 		log.Print("[REMOVE FROM WORKER MAP] Couldnt remove the worker: ", err)

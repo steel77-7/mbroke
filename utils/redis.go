@@ -29,12 +29,12 @@ func Redis_init() {
 	}
 }
 
-var Ingest_channel = make(chan types.Job, 1000)
-var Worker_inquiry_channel = make(chan string, 1000)
-var Worker_feeder_channel = make(chan types.WorkerFeeding, 1000)
+var Ingest_channel = make(chan types.Job, 10000)
+var Worker_inquiry_channel = make(chan string, 10000)
+var Worker_feeder_channel = make(chan types.WorkerFeeding, 10000)
 
-var Worker_channel = make(chan types.Job, 1000)
+var Worker_channel = make(chan types.Job, 10000)
 var IngesterChannel = make(chan types.Job, 100000)
 var Dead_letter_channel = make(chan types.Job, 10000)
-var ACK_channel = make(chan string, 1000)
-var Del_channel = make(chan string, 10)
+var ACK_channel = make(chan string, 10000)
+var Del_channel = make(chan string, 10000)

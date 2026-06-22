@@ -70,17 +70,16 @@ func (s *Server) Start() error {
 	log.Print("server started")
 	defer ln.Close()
 	go s.accept_loop()
-
+	go s.Worker_feeder()
 	go s.check_heartbeat()
 	<-s.quitch
 	return nil
 }
 
 func (s *Server) accept_loop() {
-
 	for {
 		conn, err := s.Listener.Accept()
-		log.Print("new")
+		//log.Print("new")
 		if err != nil {
 			log.Print("Couldnt accept connection :", err)
 			continue
@@ -118,14 +117,14 @@ func (s *Server) read_loop(conn net.Conn) {
 		log.Print("Coudlnt establish connection [LENGTH IS 0] ")
 		return
 	}
-	log.Print("the length: ", string(len_buf[:]))
+	//log.Print("the length: ", string(len_buf[:]))
 
 	type_buf := make([]byte, 1)
 	if _, err := io.ReadFull(conn, type_buf[:]); err != nil {
 		log.Print("couldnt read the type:", err)
 		return
 	}
-	log.Print("the type: ", type_buf[:])
+	//log.Print("the type: ", type_buf[:])
 	if Message_type(type_buf[0]) != CONNECT {
 		log.Print("IDK TF IS WRONG HERE //// or someone malicious")
 		return
@@ -138,7 +137,7 @@ func (s *Server) read_loop(conn net.Conn) {
 		log.Print("couldnt read the payload:", err)
 		return
 	}
-	log.Print("paylaod: ", string(payload))
+	//	log.Print("paylaod: ", string(payload))
 	if string(payload) != Conf.Secret {
 		conn.Close()
 		log.Print("Connection closed")
@@ -156,7 +155,7 @@ func (s *Server) read_loop(conn net.Conn) {
 	}
 	s.mu.Unlock()
 	Add_to_set(id)
-	log.Print("reaached the server registeration")
+	//log.Print("reaached the server registeration")
 	for {
 		s.mu.Lock()
 		val, ok := s.clients[id]
@@ -178,39 +177,45 @@ func (s *Server) read_loop(conn net.Conn) {
 	}
 }
 
-
-func(s * Server) Worker_feeder(){
-	ticker := time.NewTicker(10* time.Millisecond)
-	defer ticker.Close()
+func (s *Server) Worker_feeder() {
+	// ticker := time.NewTicker(10 * time.Millisecond)
+	// defer ticker.Stop()
 	var payload types.WorkerFeeding
-	for t:= range ticker.C{
+	for {
+		//start := time.Now()
+		//log.Print("Worker_feeder_len:", len(Worker_feeder_channel))
+
 		payload = <-Worker_feeder_channel
-		id:= payload.ID
-		ok:=Present_in_set(id)
+		id := payload.ID
+
+		ok := Present_in_set(id)
 		s.mu.Lock()
-		val, _:=s.clients[id]
+		val, _ := s.clients[id]
 		s.mu.Unlock()
+
 		if ok {
-			worker := Fetch_worker(id)
+			//worker := Fetch_worker(id)
 			new_worker := &types.Worker{
 				ID:        id,
 				Job_id:    payload.Data.ID,
 				Last_ping: time.Now().UTC().UnixMilli(),
 			}
 			Add_to_map(new_worker)
-			tbs, _ := json.Marshal(job.Values["data"])
+			tbs, _ := json.Marshal(payload.Data.Values["data"])
 			val.mu.Lock()
-
 			err := val.send(PULL, []byte(tbs))
+			//log.Println("send", time.Since(start))
 			if err != nil {
 				log.Print("couldnt send the pull res", err)
 			}
+			//go val.send(PULL, []byte(tbs))
 			val.mu.Unlock()
 
 		}
 
 	}
 }
+
 func (s *Server) check_heartbeat() {
 
 	for {
@@ -261,7 +266,7 @@ func (client *Client) read_message() (msg types.Message, err error) {
 	var r io.Reader = client.conn
 
 	if _, err := io.ReadFull(r, len_buf[:]); err != nil {
-		log.Print("it closed alrweadt")
+		//	log.Print("it closed alrweadt")
 		return types.Message{}, err
 	}
 	length := binary.BigEndian.Uint32(len_buf[:])
@@ -333,7 +338,7 @@ func (client *Client) message_handler() {
 
 	case TACK:
 		{
-			log.Print("TACK")
+			//log.Print("TACK")
 			ok := Present_in_set(client.id)
 			if !ok {
 				client.mu.Lock()
@@ -349,7 +354,7 @@ func (client *Client) message_handler() {
 			worker := Fetch_worker(client.id)
 
 			if string(msg.Payload) == "1" {
-				log.Print(worker)
+				//log.Print(worker)
 				ACK_channel <- worker["job_id"]
 			}
 
@@ -363,11 +368,10 @@ func (client *Client) message_handler() {
 			}
 			client.mu.Unlock()
 
-
 		}
 	case PULL:
 		{
-			log.Print("pull")
+
 			Worker_inquiry_channel <- client.id
 			// job := Feed_to_worker(client.id)
 			// if job == nil {
