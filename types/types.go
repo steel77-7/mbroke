@@ -13,13 +13,19 @@ type Job struct {
 	Data     string `json:"data"`
 }
 
+type JobInfo struct {
+	ID   string `json:"id" redis:"id"`
+	Data string `json:"data" redis:"data"`
+}
+
+
 type Ack_request struct {
 	ID  string `json:"id"`
 	ACK bool   `json:"ack"`
 }
 type WorkerFeeding struct {
-	ID   string         `json:"id"`
-	Data redis.XMessage `json:"data"`
+	ID   string           `json:"id"`
+	Data []redis.XMessage `json:"data"`
 }
 type Worker struct {
 	ID        string `json:"id" redis:"id"`

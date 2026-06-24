@@ -61,7 +61,6 @@ func NewServer(addr string) *Server {
 
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.Addr)
-
 	if err != nil {
 		log.Print("Error in starting the tcp server: ", ln)
 		return err
@@ -71,6 +70,7 @@ func (s *Server) Start() error {
 	defer ln.Close()
 	go s.accept_loop()
 	go s.Worker_feeder()
+
 	go s.check_heartbeat()
 	<-s.quitch
 	return nil
@@ -79,10 +79,14 @@ func (s *Server) Start() error {
 func (s *Server) accept_loop() {
 	for {
 		conn, err := s.Listener.Accept()
+
 		//log.Print("new")
 		if err != nil {
 			log.Print("Couldnt accept connection :", err)
 			continue
+		}
+		if tc, ok := conn.(*net.TCPConn); ok {
+			tc.SetNoDelay(true)
 		}
 		go s.read_loop(conn)
 	}
@@ -146,13 +150,14 @@ func (s *Server) read_loop(conn net.Conn) {
 	id := fmt.Sprint(uuid.New())
 	//log.Print(id)
 	s.mu.Lock()
-	s.clients[id] = &Client{
+	c := &Client{
 		conn:   conn,
 		id:     id,
 		ready:  true,
-		mu:     s.mu,
+		mu:     &sync.Mutex{},
 		quitch: make(chan struct{}, 2),
 	}
+	s.clients[id] = c
 	s.mu.Unlock()
 	Add_to_set(id)
 	//log.Print("reaached the server registeration")
@@ -160,32 +165,34 @@ func (s *Server) read_loop(conn net.Conn) {
 		s.mu.Lock()
 		val, ok := s.clients[id]
 		s.mu.Unlock()
-
 		if ok {
 			select {
 			case <-val.quitch:
 				{
-					log.Print("disconneting")
+					//log.Print("disconneting")
 					return
 				}
 			default:
 				{
-					val.message_handler()
+					c.message_handler()
 				}
 			}
+		} else {
+			log.Print("disconnecting (client unregistered)")
+			return
 		}
 	}
 }
-
 func (s *Server) Worker_feeder() {
 	// ticker := time.NewTicker(10 * time.Millisecond)
 	// defer ticker.Stop()
 	var payload types.WorkerFeeding
 	for {
-		//start := time.Now()
 		//log.Print("Worker_feeder_len:", len(Worker_feeder_channel))
 
+		//start := time.Now()
 		payload = <-Worker_feeder_channel
+
 		id := payload.ID
 
 		ok := Present_in_set(id)
@@ -194,20 +201,30 @@ func (s *Server) Worker_feeder() {
 		s.mu.Unlock()
 
 		if ok {
-			//worker := Fetch_worker(id)
-			new_worker := &types.Worker{
-				ID:        id,
-				Job_id:    payload.Data.ID,
-				Last_ping: time.Now().UTC().UnixMilli(),
+			var jobIDs []string
+			var jobs []types.JobInfo
+			for _, msg := range payload.Data {
+				jobIDs = append(jobIDs, msg.ID)
+				dataVal, _ := msg.Values["data"].(string)
+				jobs = append(jobs, types.JobInfo{
+					ID:   msg.ID,
+					Data: dataVal,
+				})
 			}
-			Add_to_map(new_worker)
-			tbs, _ := json.Marshal(payload.Data.Values["data"])
+			// new_worker := &types.Worker{
+			// 	ID:        id,
+			// 	Job_id:    strings.Join(jobIDs, ","),
+			// 	Last_ping: time.Now().UTC().UnixMilli(),
+			// }
+			//Add_to_map(new_worker)
+			tbs, _ := json.Marshal(jobs)
+			//log.Print("job , ", string(tbs))
 			val.mu.Lock()
-			err := val.send(PULL, []byte(tbs))
-			//log.Println("send", time.Since(start))
+			err := val.send(PULL, tbs)
 			if err != nil {
 				log.Print("couldnt send the pull res", err)
 			}
+			//log.Print("send:", time.Since(start))
 			//go val.send(PULL, []byte(tbs))
 			val.mu.Unlock()
 
@@ -226,16 +243,24 @@ func (s *Server) check_heartbeat() {
 			//kickj from the map
 			// from the client thing
 			// clear the job for next pull
-			Remove_worker_from_map(dead)
+			//	Remove_worker_from_map(dead)
 			Remove_from_set(dead)
+			s.mu.Lock()
 			val, o := s.clients[dead]
+			s.mu.Unlock()
+
 			if !o {
-				break
+				Del_channel <- dead
+				continue
 			}
 			val.mu.Lock()
 			val.conn.Close()
 			val.quitch <- struct{}{}
+			s.mu.Lock()
+
 			delete(s.clients, dead)
+			s.mu.Unlock()
+
 			val.mu.Unlock()
 			Del_channel <- dead
 			//Del_consumer([]string{dead})
@@ -262,10 +287,12 @@ func (client *Client) send(kind byte, payload []byte) error {
 
 func (client *Client) read_message() (msg types.Message, err error) {
 	//log.Print("read message")
+	//start := time.Now()
+
 	var len_buf [4]byte
 	var r io.Reader = client.conn
 
-	if _, err := io.ReadFull(r, len_buf[:]); err != nil {
+	if _, err := io.ReadFull(r, len_buf[:]); err != nil { ////here
 		//	log.Print("it closed alrweadt")
 		return types.Message{}, err
 	}
@@ -273,12 +300,14 @@ func (client *Client) read_message() (msg types.Message, err error) {
 	if length < 1 {
 		return types.Message{}, fmt.Errorf("invalid length")
 	}
+	//	start := time.Now()
 
 	msgTypeBuf := make([]byte, 1)
 	if _, err = io.ReadFull(r, msgTypeBuf); err != nil {
 		return types.Message{}, err
 	}
 	msg_type := msgTypeBuf[0]
+	//	log.Print("send:", time.Since(start))
 
 	msg = types.Message{
 		Length:   length,
@@ -293,21 +322,19 @@ func (client *Client) read_message() (msg types.Message, err error) {
 		}
 		msg.Payload = payload
 	}
-
+	// duration := time.Since(start)
+	// if duration > 10*time.Millisecond {
+	// 	log.Println("send", duration)
+	// }
 	return msg, nil
 }
-
 func (client *Client) message_handler() {
+
 	msg, err := client.read_message()
 	if err != nil {
-		log.Print(err)
-		if err == io.EOF {
-			client.conn.Close()
-			//	log.Printf("Connection to the client %d is closed", client.id)
-			client.quitch <- struct{}{}
-			return
-		}
-		//	log.Print("couldnt parse the message", err)
+		////	log.Printf("Read error on client %s: %v", client.id, err)
+		client.conn.Close()
+		client.quitch <- struct{}{}
 		return
 	}
 
@@ -351,14 +378,13 @@ func (client *Client) message_handler() {
 
 				break
 			}
-			worker := Fetch_worker(client.id)
 
-			if string(msg.Payload) == "1" {
-				//log.Print(worker)
-				ACK_channel <- worker["job_id"]
+			jobID := string(msg.Payload)
+			if jobID != "" {
+				log.Print("id :", jobID)
+				ACK_channel <- jobID
 			}
 
-			Remove_worker_from_map(client.id)
 			//remove the worker from the map as well if they dopnt have job
 			client.mu.Lock()
 
@@ -373,6 +399,7 @@ func (client *Client) message_handler() {
 		{
 
 			Worker_inquiry_channel <- client.id
+
 			// job := Feed_to_worker(client.id)
 			// if job == nil {
 			// 	client.send(PULL, []byte("0"))

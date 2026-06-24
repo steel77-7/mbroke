@@ -143,7 +143,7 @@ func statsLogger(rdb *redis.Client, streamName, groupName string) {
 		}
 
 		fmt.Printf(
-			"\r[stats] in/s: %-6d (peak: %-6d) | out/s: %-6d (peak: %-6d) | stream: %-8d | workers: %-4d | pending: %-6d",
+			"[stats] in/s: %-6d (peak: %-6d) | out/s: %-6d (peak: %-6d) | stream: %-8d | workers: %-4d | pending: %-6d\n",
 			ingestionRate, peakIngestion,
 			consumptionRate, peakConsumption,
 			streamLen,
@@ -198,7 +198,7 @@ func Producer() {
 	for i := 0; i < workers; i++ {
 
 		go func() {
-			for c := 0; c < 10000; c++ {
+			for c := 0; c < 1000; c++ {
 
 				id := jobsProduced.Add(1)
 

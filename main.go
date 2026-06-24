@@ -36,7 +36,8 @@ func main() {
 	go utils.Consumer_deleter()
 	go utils.Dead_letter_scan()
 	go utils.Feed_to_worker()
-	//go utils.Pending_jobs()
+
+	go utils.Pending_jobs()
 
 	server := &http.Server{
 		Addr:           ":" + fmt.Sprint(utils.Conf.Port),
