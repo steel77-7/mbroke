@@ -2,10 +2,8 @@ package types
 
 import (
 	"encoding/json"
-	"sync"
 
 	"github.com/redis/go-redis/v9"
-	// "github.com/mbroke/types"
 )
 
 type Job struct {
@@ -17,7 +15,6 @@ type JobInfo struct {
 	ID   string `json:"id" redis:"id"`
 	Data string `json:"data" redis:"data"`
 }
-
 
 type Ack_request struct {
 	ID  string `json:"id"`
@@ -42,7 +39,6 @@ type Metadata struct {
 	State bool   `redis:"state" json:"state"`
 }
 type Job_req struct {
-	//ID   string          `json:"id"`
 	Metadata json.RawMessage `json:"metadata"`
 	Data     json.RawMessage `json:"data"`
 }
@@ -51,9 +47,4 @@ type Message struct {
 	Length   uint32
 	Msg_type byte
 	Payload  []byte
-}
-
-type Work_map struct {
-	Mu   *sync.RWMutex
-	List map[string]*Worker
 }

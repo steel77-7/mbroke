@@ -42,50 +42,49 @@ type Message struct {
 	Payload []byte
 }
 
-// chaos knobs — tune these to make it more or less brutal
-// const (
-// 	// crash probabilities (per event)
-// 	crashOnJobProb  = 0.03 // 3% chance of crashing while processing a job
-// 	crashRandomProb = 0.01 // 1% chance per heartbeat tick of random crash
-// 	zombieProb      = 0.02 // 2% chance of becoming a zombie (stop responding but keep conn open)
-// 	halfWriteProb   = 0.02 // 2% chance of writing a partial message then dying
-// 	garbageProb     = 0.02 // 2% chance of sending garbage bytes
-// 	nackProb        = 0.15 // 15% chance of NACKing a job (sending "0" TACK)
-// 	slowProcessProb = 0.10 // 10% chance of very slow processing (2-5 seconds)
-// 	doubleAckProb   = 0.03 // 3% chance of sending duplicate TACK
-// 	wrongTypeProb   = 0.02 // 2% chance of sending a message with wrong type byte
-
-//	// timing
-//	heartbeatInterval = 3 * time.Second
-//	minProcessTime    = 5 * time.Millisecond
-//	maxProcessTime    = 100 * time.Millisecond
-//	slowProcessMin    = 2 * time.Second
-//	slowProcessMax    = 5 * time.Second
-//	zombieLifetime    = 30 * time.Second // how long a zombie holds the connection
-//	reconnectDelay    = 500 * time.Millisecond
-//
-// )
 const (
 	// crash probabilities (per event)
-	crashOnJobProb  = 0 // 3% chance of crashing while processing a job
-	crashRandomProb = 0 // 1% chance per heartbeat tick of random crash
-	zombieProb      = 0 // 2% chance of becoming a zombie (stop responding but keep conn open)
-	halfWriteProb   = 0 // 2% chance of writing a partial message then dying
-	garbageProb     = 0 // 2% chance of sending garbage bytes
-	nackProb        = 0 // 15% chance of NACKing a job (sending "0" TACK)
-	slowProcessProb = 0 // 10% chance of very slow processing (2-5 seconds)
-	doubleAckProb   = 0 // 3% chance of sending duplicate TACK
-	wrongTypeProb   = 0 // 2% chance of sending a message with wrong type byte
+	crashOnJobProb  = 0    // 3% chance of crashing while processing a job
+	crashRandomProb = 0    // 1% chance per heartbeat tick of random crash
+	zombieProb      = 0    // 2% chance of becoming a zombie (stop responding but keep conn open)
+	halfWriteProb   = 0    // 2% chance of writing a partial message then dying
+	garbageProb     = 0    // 2% chance of sending garbage bytes
+	nackProb        = 0.50 // 15% chance of NACKing a job (sending "0" TACK)
+	slowProcessProb = 0    // 10% chance of very slow processing (2-5 seconds)
+	doubleAckProb   = 0    // 3% chance of sending duplicate TACK
+	wrongTypeProb   = 0    // 2% chance of sending a message with wrong type byte
 
 	// timing
 	heartbeatInterval = 100 * time.Millisecond
-	minProcessTime    = 10 * time.Millisecond
-	maxProcessTime    = 10 * time.Millisecond
-	slowProcessMin    = 100 * time.Millisecond
-	slowProcessMax    = 100 * time.Millisecond
-	zombieLifetime    = 0 * time.Second // how long a zombie holds the connection
+	minProcessTime    = 5 * time.Millisecond
+	maxProcessTime    = 100 * time.Millisecond
+	slowProcessMin    = 2 * time.Second
+	slowProcessMax    = 5 * time.Second
+	zombieLifetime    = 30 * time.Second // how long a zombie holds the connection
 	reconnectDelay    = 500 * time.Millisecond
 )
+
+// const (
+// 	// crash probabilities (per event)
+// 	crashOnJobProb  = 0 // 3% chance of crashing while processing a job
+// 	crashRandomProb = 0 // 1% chance per heartbeat tick of random crash
+// 	zombieProb      = 0 // 2% chance of becoming a zombie (stop responding but keep conn open)
+// 	halfWriteProb   = 0 // 2% chance of writing a partial message then dying
+// 	garbageProb     = 0 // 2% chance of sending garbage bytes
+// 	nackProb        = 0 // 15% chance of NACKing a job (sending "0" TACK)
+// 	slowProcessProb = 0 // 10% chance of very slow processing (2-5 seconds)
+// 	doubleAckProb   = 0 // 3% chance of sending duplicate TACK
+// 	wrongTypeProb   = 0 // 2% chance of sending a message with wrong type byte
+
+// 	// timing
+// 	heartbeatInterval = 100 * time.Millisecond
+// 	minProcessTime    = 10 * time.Millisecond
+// 	maxProcessTime    = 20 * time.Millisecond
+// 	slowProcessMin    = 100 * time.Millisecond
+// 	slowProcessMax    = 110 * time.Millisecond
+// 	zombieLifetime    = 0 * time.Second // how long a zombie holds the connection
+// 	reconnectDelay    = 500 * time.Millisecond
+// )
 
 type BrokerClient struct {
 	conn      net.Conn

@@ -13,15 +13,13 @@ import (
 )
 
 func main() {
-
+	//loading the redis and broker configuration variables
 	godotenv.Load()
 	utils.Conf, utils.RedConf = utils.LoadConfig()
-	log.Print("redis addr", utils.Conf)
-
-	//	go utils.Reply_to_producer()
 	router := gin.New()
 	router.Use(gin.Recovery())
 
+	//starts the http endpoint for feeding the workers
 	router.POST("/ingest", routes.Ingest)
 	go func() {
 		server := utils.NewServer(":" + fmt.Sprint(utils.Conf.TCPServerPort))
@@ -30,13 +28,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}()
+	//starting the broker goroutines
 	utils.Redis_init()
 	utils.StartIngester()
 	go utils.Acker()
-	go utils.Consumer_deleter()
-	go utils.Dead_letter_scan()
 	go utils.Feed_to_worker()
-
 	go utils.Pending_jobs()
 
 	server := &http.Server{

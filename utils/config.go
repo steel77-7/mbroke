@@ -18,6 +18,8 @@ type Config struct {
 	Port              int    `env:"PORT" envDefault:"8080"`
 	Hmac              string `env:"HMAC_SECRET" envDefault:"secret"`
 	Secret            string `env:"SECRET" envDefault:"secret"`
+	SetName           string `env:"SET_NAME" envDefault:"workerset"`
+	BatchSize         int64  `env:"BATCH_SIZE" envDefault:"100"`
 }
 
 type RedisConfig struct {
