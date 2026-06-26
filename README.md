@@ -1,10 +1,6 @@
 # mbroke
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/mbroke/mbroke)](https://github.com/mbroke/mbroke)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Reference](https://pkg.go.dev/badge/github.com/mbroke/mbroke.svg)](https://pkg.go.dev/github.com/mbroke/mbroke)
-
-`mbroke` is a distributed, high-throughput message broker written in Go. It uses Redis Streams as a durable, persistent source of truth storage, while the broker manages active worker dispatch, leasing, worker heartbeats, retries, and dead-letter recovery.
+`mbroke` is a distributed, high-throughput message broker written in Go. It uses Redis Streams as a durable, persistent source of truth storage, while the broker manages scheduling, leasing, acknowledgements, worker discovery, retries, and dead-letter recovery.
 
 By offloading queue persistence to Redis Streams and managing scheduling, worker lifecycles, and failure recovery inside a stateful Go broker, `mbroke` bridges the gap between raw persistence and reliable distributed orchestration.
 
@@ -33,77 +29,37 @@ Redis Streams provide an excellent foundation for append-only log data structure
 
 ```mermaid
 graph TD
-    subgraph Client Space
-        P[HTTP Producers]
-        W[TCP Workers]
-    end
+    Producer[Producer] -->|HTTP POST| IngestEndpoint[HTTP Ingestion Endpoint]
+    IngestEndpoint -->|Go Channel| Broker[Broker]
+    Broker -->|Pipelined XAdd| RedisStreams[(Redis Streams)]
 
-    subgraph Broker Server [mbroke Go Broker]
-        H[HTTP Ingest Handler]
-        IC[IngesterChannel - 100k Buffer]
-        SI[StartIngester Routine]
-        
-        TS[TCP Server]
-        WIC[Worker Inquiry Channel - 10k Buffer]
-        WFC[Worker Feeder Channel - 10k Buffer]
-        
-        FW[Feed to Worker Loop]
-        PJ[Pending Jobs Reclaimer]
-        WF[Worker Feeder Loop]
-        
-        CH[check_heartbeat Loop]
-        AC[ACK Channel - 10k Buffer]
-        AK[Acker Batching Routine]
-        LR[Lease Routine]
-        TC[Time Channel]
-    end
+    Workers[TCP-Connected Workers] -->|TCP PULL| Queue[In-memory Scheduling Queue]
+    Queue -->|De-queue Worker ID| Broker
+    Broker -->|XReadGroup / XClaim| RedisStreams
+    Broker -->|TCP PULL Payload| Workers
 
-    subgraph Storage [Durable Truth]
-        RS[(Redis Stream: ingest:primary)]
-        WS[(Redis Sorted Set: workerset)]
-        DLQ[(Redis Stream: dead_letter)]
-    end
+    Workers -->|TCP TACK| AckProc[ACK Processing]
+    AckProc -->|Batched XAck & XDel| RedisStreams
 
-    %% Ingestion Flow
-    P -->|POST /ingest| H
-    H -->|Enqueue| IC
-    IC --> SI
-    SI -->|Pipelined XAdd| RS
-
-    %% TCP Worker Connections
-    W -->|TCP Connection & CONNECT| TS
-    TS -->|ZAdd / Score Update| WS
-
-    %% Heartbeat & Discovery
-    W -->|HEARTBEAT Frame| TS
-    CH -->|ZRangeByScore / Evict| WS
-    CH -->|Teardown Connection| TS
-
-    %% Scheduling and Feeder Flow
-    W -->|PULL Frame| TS
-    TS -->|Register Ready Worker| WIC
-    WIC --> FW
-    WIC --> PJ
+    Broker -.->|Processing Latency| LeaseMgr[Lease Management]
+    LeaseMgr -.->|Adaptive Timeout| DLQ[Dead-Letter Recovery]
+    RedisStreams -->|Idle Past Timeout| DLQ
     
-    FW -->|XReadGroup >| RS
-    FW -->|Enqueue Ready Jobs| WFC
-    
-    PJ -->|XPendingExt & XClaim| RS
-    PJ -->|Enqueue Claimed Jobs| WFC
-    PJ -->|Retry > Max | DLQ
-    
-    WFC --> WF
-    WF -->|TCP PULL Job Payload| W
-
-    %% Completion / Feedback Loop
-    W -->|TACK Frame| TS
-    TS -->|Measure Latency| TC
-    TS -->|Enqueue Job ID| AC
-    TC --> LR
-    LR -->|Recalculate LeaseVar| PJ
-    AC --> AK
-    AK -->|Batched XAck & XDel| RS
+    DLQ -->|Retry <= Limit: Reclaim| Queue
+    DLQ -->|Retry > Limit: Move to DLQ Stream| RedisStreams
 ```
+
+### Components and Flow Description
+
+* **Producer**: Sends jobs containing payload data and metadata over HTTP to the broker.
+* **HTTP Ingestion Endpoint**: Exposes the `/ingest` REST endpoint. It routes incoming payloads directly into an in-memory buffer (`IngesterChannel`) to keep client response times minimal.
+* **Broker**: Coordinates the background loops for batching, scheduling, TCP connection handling, heartbeats, and acknowledgements.
+* **Redis Streams**: Acts as the single source of durable truth for job state, using consumer groups to distribute and partition workload.
+* **In-memory Scheduling Queue**: Buffers worker inquiry identifiers (`Worker_inquiry_channel`) to map ready TCP workers to available jobs without continuously polling Redis.
+* **TCP-Connected Workers**: Process tasks delivered via a stateful TCP connection using a custom binary frame protocol.
+* **Lease Management**: Dynamically computes processing leases (`LeaseVar`) based on worker performance feedback to minimize failover detection times.
+* **ACK Processing**: Batches completed task identifiers and issues pipeline calls (`XAck` & `XDel`) to mark jobs as done and clear them from Redis.
+* **Dead-Letter Recovery**: Identifies repeatedly failing jobs, isolates them by writing to a dedicated dead-letter stream, and deletes them from the primary stream.
 
 ---
 
@@ -167,25 +123,16 @@ Workers communicate with the broker over a custom, lightweight binary protocol d
 ### Message Frame Format
 
 All TCP messages are framed with a 5-byte header followed by a variable-length payload:
-
-```
-+-----------------------------------+---------------+-----------------------+
-|  Length (4 Bytes / Big-Endian)    | MsgType (1 B) | Payload (N Bytes)     |
-+-----------------------------------+---------------+-----------------------+
-```
-* **Length** (`uint32`): The total length of the remaining frame (`1 + len(Payload)`).
-* **MsgType** (`uint8`): Code representing the command type.
-* **Payload**: Raw byte sequence matching the message type format.
+* **Length** (4 Bytes / Big-Endian): The total length of the remaining frame (`1 + len(Payload)`).
+* **MsgType** (1 Byte): Code representing the command type.
+* **Payload** (N Bytes): Raw byte sequence matching the message type format.
 
 ### Message Types
-
-| Value | Type | Direction | Payload Description |
-| :---: | :--- | :--- | :--- |
-| `0` | **`CONNECT`** | Worker $\rightarrow$ Broker | The authentication shared secret string (e.g., `secret`). |
-| `1` | **`HEARTBEAT`** | Worker $\leftrightarrow$ Broker | String representation of the client's current Unix timestamp + 10s. Broker replies with `0` if worker is unknown/rejected. |
-| `2` | **`TACK`** | Worker $\leftrightarrow$ Broker | Client sends the Job ID string to acknowledge completion, or `"dack"` to NACK. Broker replies with `1` on success, `0` on rejection. |
-| `3` | **`PULL`** | Worker $\leftrightarrow$ Broker | Client sends empty payload to request jobs. Broker responds with a `PULL` frame containing a JSON array of `[]types.JobInfo`. |
-| `4` | **`INVALID`** | Broker $\rightarrow$ Worker | Sent by the broker when an invalid message type is received. Returns `0`. |
+* **`CONNECT`** (Value: `0`, Worker $\rightarrow$ Broker): The authentication shared secret string.
+* **`HEARTBEAT`** (Value: `1`, Worker $\leftrightarrow$ Broker): String representation of the client's current Unix timestamp + 10s. Broker replies with `0` if worker is unknown/rejected.
+* **`TACK`** (Value: `2`, Worker $\leftrightarrow$ Broker): Client sends the Job ID string to acknowledge completion, or `"dack"` to NACK. Broker replies with `1` on success, `0` on rejection.
+* **`PULL`** (Value: `3`, Worker $\leftrightarrow$ Broker): Client sends empty payload to request jobs. Broker responds with a `PULL` frame containing a JSON array of `[]types.JobInfo`.
+* **`INVALID`** (Value: `4`, Broker $\rightarrow$ Worker): Sent by the broker when an invalid message type is received. Returns `0`.
 
 ---
 
@@ -193,74 +140,84 @@ All TCP messages are framed with a 5-byte header followed by a variable-length p
 
 The broker reads configuration parameters from environment variables (or a local `.env` file).
 
-### Broker & Queue Configuration
+### Broker & Queue Variables
+* `PORT` (Default: `8080`): Port for HTTP ingestion and administration endpoint.
+* `TCP_SERVER_PORT` (Default: `9000`): Port for the stateful TCP worker server.
+* `STREAM_NAME` (Default: `ingest:primary`): Redis Stream name used for durable job storage.
+* `CONSUMER_GROUP_NAME` (Default: `primary`): Redis Stream Consumer Group name.
+* `DEAD_LETTER_NAME` (Default: `dead_letter`): Redis Stream name for dead-lettered jobs.
+* `BATCH_SIZE` (Default: `100`): Max number of jobs dispatched per worker poll.
+* `RETRY_COUNT` (Default: `3`): Maximum processing attempts before dead-lettering.
+* `SECRET` (Default: `secret`): Shared authentication secret required for workers.
+* `SET_NAME` (Default: `workerset`): Key name for the Redis sorted set tracking worker heartbeats.
+* `MAX_LEN` (Default: `2000000`): Maximum length configuration defined in client structs.
 
-| Variable | Type | Default | Description |
-| :--- | :---: | :--- | :--- |
-| `PORT` | `int` | `8080` | Port for HTTP ingestion and administration endpoint. |
-| `TCP_SERVER_PORT` | `int` | `9000` | Port for the stateful TCP worker server. |
-| `STREAM_NAME` | `string` | `ingest:primary` | Redis Stream name used for durable job storage. |
-| `CONSUMER_GROUP_NAME`| `string` | `primary` | Redis Stream Consumer Group name. |
-| `DEAD_LETTER_NAME` | `string` | `dead_letter` | Redis Stream name for dead-lettered jobs. |
-| `BATCH_SIZE` | `int64` | `100` | Max number of jobs dispatched per worker poll. |
-| `RETRY_COUNT` | `int64` | `3` | Maximum processing attempts before dead-lettering. |
-| `SECRET` | `string` | `secret` | Shared authentication secret required for workers. |
-| `SET_NAME` | `string` | `workerset` | Key name for the Redis sorted set tracking worker heartbeats. |
-| `MAX_LEN` | `int64` | `2000000` | Maximum length buffer (not utilized in active pipeline). |
-
-### Redis Configuration
-
-| Variable | Type | Default | Description |
-| :--- | :---: | :--- | :--- |
-| `REDIS_ADDR` | `string` | `redis:6379` | Redis server address. |
-| `REDIS_POOL_SIZE` | `int` | `10` | Redis client connection pool size. |
-| `REDIS_PASSWORD` | `string` | *Empty* | Redis password. |
-| `REDIS_DB` | `int` | `0` | Redis Database index. |
-| `REDIS_PROTOCOL` | `int` | `2` | Redis connection protocol (`2` or `3`). |
+### Redis Connection Variables
+* `REDIS_ADDR` (Default: `redis:6379`): Redis server address.
+* `REDIS_POOL_SIZE` (Default: `10`): Redis client connection pool size.
+* `REDIS_PASSWORD` (Default: *Empty*): Redis password.
+* `REDIS_DB` (Default: `0`): Redis Database index.
+* `REDIS_PROTOCOL` (Default: `2`): Redis connection protocol (`2` or `3`).
 
 ---
 
-## Runtime Statistics & Performance Observations
+## Performance & Runtime Statistics
 
-The statistics logs represent the real-time operational state of the broker under load. Below are critical observations analyzed from runtime benchmarks:
+The statistics logs represent the real-time operational state of the broker under load.
 
-### 1. High-Throughput Ingestion (Producers Active, Workers Offline)
+### Startup Initialization
+
+When launching the broker, the system starts HTTP listeners, registers the `/ingest` routing, launches the TCP server on port `9000`, and starts background goroutines for ingesting, claiming, and auditing workers.
+
+![Startup Logs](screenshots/screenshot-2026-06-26_20.27.54.png)
+*Figure 1: Broker startup logs displaying successful TCP and HTTP server initialization.*
+
+---
+
+### High-Throughput Ingestion (Producers Active, Workers Offline)
 
 During the pure ingestion phase, producers write to the `/ingest` HTTP endpoint while no workers are connected (`workers = 0`).
 
-```
-[stats] in/s: 52152  (peak: 58296 ) | out/s: 0  (peak: 0 ) | stream: 345495 | workers: 0 | pending: 0
-[stats] in/s: 54788  (peak: 58296 ) | out/s: 0  (peak: 0 ) | stream: 372313 | workers: 0 | pending: 0
-```
+![Ingestion Statistics](screenshots/screenshot-2026-06-26_20.28.24.png)
+*Figure 2: Ingestion statistics showing a peak throughput of ~58k jobs/second with no connected workers while Redis stream length continuously increases.*
 
-* **Observation**: Ingestion throughput consistently runs between **50k and 58k jobs/sec**.
-* **Analysis**: This demonstrates the efficiency of the broker's in-memory buffering channel coupled with Redis pipeline writes, which bypasses the latency of single-item network hops.
+* **Analysis**: Ingestion throughput consistently runs between **50k and 58k jobs/sec**. This demonstrates the efficiency of the broker's in-memory buffering channel coupled with Redis pipeline writes, bypassing single-item roundtrip network overhead.
 
-### 2. High-Concurrency Dispatch & Leasing
+---
+
+### Concurrent Job Scheduling & Leasing
 
 When consumers are introduced to the cluster, the broker schedules jobs concurrently.
 
-```
-[stats] in/s: 0  (peak: 58296 ) | out/s: 35584  (peak: 35584 ) | stream: 1310593 | workers: 250 | pending: 5793
-[stats] in/s: 0  (peak: 58296 ) | out/s: 0      (peak: 35584 ) | stream: 1310593 | workers: 250 | pending: 11297
-```
+![Dispatch and Scheduling](screenshots/screenshot-2026-06-26_20.30.51.png)
+*Figure 3: Scheduling stats showing ~250 workers and a dispatch peak of ~35k jobs/second while pending leases fluctuate as workers process jobs.*
 
-* **Observation**: With **250 active workers**, dispatch peaks at roughly **35.5k jobs/sec**. The `pending` lease length fluctuates rapidly.
-* **Analysis**: As jobs are distributed, they enter the pending list. The rapid swing in the pending queue demonstrates concurrent task execution and high-frequency binary acknowledgements.
+* **Analysis**: With **250 active workers**, dispatch peaks at roughly **35.5k jobs/sec**. The `pending` lease count fluctuates rapidly as workers acquire and acknowledge tasks concurrently.
 
-### 3. Queue Draining Phase
+---
+
+### Queue Draining
 
 This phase showcases workers consuming the remaining queue backlog after producers stop sending jobs.
 
-```
-[stats] in/s: 0  (peak: 58296 ) | out/s: 0     (peak: 37320 ) | stream: 16178 | workers: 250 | pending: 13458
-[stats] in/s: 0  (peak: 58296 ) | out/s: 34992 (peak: 37320 ) | stream: 7430  | workers: 250 | pending: 7430
-[stats] in/s: 0  (peak: 58296 ) | out/s: 0     (peak: 37320 ) | stream: 861   | workers: 250 | pending: 861
-[stats] in/s: 0  (peak: 58296 ) | out/s: 3444  (peak: 37320 ) | stream: 0     | workers: 250 | pending: 0
-```
+![Queue Draining Statistics](screenshots/screenshot-2026-06-26_20.36.58.png)
+*Figure 4: Queue draining process. Shows workers draining the queue. The broker dispatches jobs in bursts while pending jobs decrease until the stream is empty.*
 
-* **Observation**: Jobs are dispatched in bursts (`out/s` spikes to ~35k, then drops to 0, while `pending` jobs step down in blocks).
-* **Analysis**: The broker processes worker inquiries in batch iterations. Pending leases decrease rapidly as workers resolve tasks, showing that the system successfully empties the stream to `0` without leaking stale leases.
+* **Analysis**: Jobs are dispatched in bursts (`out/s` spikes to ~35k, then drops to 0, while `pending` jobs step down in blocks). The broker processes worker inquiries in batch iterations. Pending leases decrease rapidly as workers resolve tasks, successfully emptying the stream to `0` without leaking stale leases.
+
+---
+
+### Automatic Recovery of Failed Jobs (Dead-Letter Queue)
+
+If a task repeatedly fails or causes worker crashes, the broker isolates the job without interrupting the rest of the queue.
+
+![Dead-Letter Recovery in Redis](screenshots/image.png)
+*Figure 5: Redis console showing isolated dead-lettered jobs in the dead_letter stream after exceeding the maximum retry threshold.*
+
+* **Failed Job Detection**: The reclaimer loop tracks the delivery count of each pending job.
+* **Expired Leases**: When a job remains in the pending state longer than the computed dynamic visibility lease, it is scanned and claimed by the reclaimer loop.
+* **Dead-Letter Isolation**: If a job's delivery count exceeds `RETRY_COUNT` (default: 3), it is extracted from the primary stream, written to the `dead_letter` stream, and deleted from the primary stream. This prevents bad payloads from blocking subsequent jobs.
+* **Continuous Processing**: Workers continue processing the remaining valid items in the queue without manual intervention or broker downtime.
 
 ---
 
@@ -340,17 +297,7 @@ go run producer.go
 
 ## Design Decisions & Rationale
 
-* **Raw TCP Sockets for Workers**: Using HTTP or gRPC introduces standard header structures and connection framing overhead. A raw TCP socket with a custom 5-byte header allows parsing at wire-speed with near-zero allocation overhead.
+* **Raw TCP Sockets for Workers**: Using heavier protocols like HTTP/1.1 introduces standard header structures and connection framing overhead. A raw TCP socket with a custom 5-byte header allows parsing at wire-speed with near-zero allocation overhead.
 * **In-Memory Go Channels for Buffering**: The broker acts as an asynchronous buffer. Discarding synchronous database writes in favor of a buffered Go channel (`IngesterChannel`) allows HTTP producers to get instant `201 Created` responses, deferring Redis writing to optimized batch workers.
 * **Redis Sorted Set for Worker Heartbeats**: Storing worker scores (`Timestamp + 10s`) inside a sorted set allows the broker to perform dead-worker scans using a single $O(\log N + M)$ range command (`ZRangeByScore`), avoiding costly iterations over large active client maps.
 * **Lease-Deletion Model for GC**: Instead of keeping processed jobs in the stream history, `mbroke` issues an `XDel` immediately after `XAck`. This turns the Redis Stream into a strict FIFO ring-buffer, preventing infinite memory leaks and keeping Redis RAM footprint constant.
-
----
-
-## Future Roadmap
-
-- [ ] **TLS Support for Workers**: Encrypt TCP socket communications using TLS configuration.
-- [ ] **Token-Based Authentication**: Replace the static shared secret with dynamic JWT or token-based authorization.
-- [ ] **Worker Partition Assignment**: Support assigning worker threads to specific partition keys within the stream for ordered execution.
-- [ ] **Web UI Dashboard**: Build a lightweight operational dashboard to view active leases, DLQ length, worker distribution, and latency statistics.
-- [ ] **Clustered Broker Orchestration**: Support clustering multiple `mbroke` broker instances with shared state synchronization for higher availability.
