@@ -59,7 +59,7 @@ graph TD
 * **TCP-Connected Workers**: Process tasks delivered via a stateful TCP connection using a custom binary frame protocol.
 * **Lease Management**: Dynamically computes processing leases (`LeaseVar`) based on worker performance feedback to minimize failover detection times.
 * **ACK Processing**: Batches completed task identifiers and issues pipeline calls (`XAck` & `XDel`) to mark jobs as done and clear them from Redis.
-* **Dead-Letter Recovery**: Identifies repeatedly failing jobs, isolates them by writing to a dedicated dead-letter stream, and deletes them from the primary stream.
+* **Retries & Dead-Letter Recovery**: Tracks the retry count of failing or timed-out tasks. If a lease expires, the broker claims the job and re-dispatches it. If the retry count exceeds the limit, it isolates the job in a dead-letter stream.
 
 ---
 
@@ -98,13 +98,13 @@ Just as job ingestion is batched, acknowledgements are aggregated to prevent Red
 2. The `Acker` routine collects these IDs and issues a batched Redis command pipeline every **2,000 milliseconds**.
 3. It performs an `XAck` to acknowledge the consumer group, followed by `XDel` to remove the payload from the stream. Deleting processed messages keeps Redis memory consumption strictly bounded.
 
-### 5. Dead-Letter Recovery (DLQ)
-If a task repeatedly fails or causes worker crashes:
-1. The `Pending_jobs` loop inspects the delivery count of pending jobs fetched via `XPendingExt`.
-2. If a job's retry count exceeds the configured `RETRY_COUNT` (default: 3):
-   * It is read from the stream via `XRange`.
-   * It is written to the dead-letter stream specified by `DEAD_LETTER_NAME` (default: `dead_letter`).
-   * It is removed from the primary stream via `XAck` and `XDel`.
+### 5. Job Retries & Dead-Letter Recovery (DLQ)
+When a job fails or a worker disconnects before acknowledging completion:
+1. **Lease Expiry**: The job remains in the Redis Stream pending list. Once its idle time exceeds the dynamically calculated `LeaseVar` timeout, the `Pending_jobs` reclaimer identifies it.
+2. **Reclaiming & Delivery Increment (Retries)**: The reclaimer claims the job using `XClaim` and routes it to a ready worker. Each `XClaim` operation automatically increments the job's delivery counter (tracked as the retry/delivery count in Redis Streams).
+3. **Retry Threshold**:
+   * **Under Limit**: If the retry count is less than or equal to `RETRY_COUNT` (default: 3), the job is re-dispatched to the workers.
+   * **Over Limit (Dead-Letter Isolation)**: If the retry count exceeds `RETRY_COUNT`, the job is isolated. The broker fetches the payload via `XRange`, writes it to the DLQ stream specified by `DEAD_LETTER_NAME` (default: `dead_letter`), and removes it from the primary stream via `XAck` and `XDel`.
 
 ### 6. Worker Discovery and Heartbeats
 Active worker tracking prevents scheduling jobs to disconnected or frozen workers:
