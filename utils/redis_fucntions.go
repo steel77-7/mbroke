@@ -93,37 +93,6 @@ func Acker() {
 	}
 }
 
-func Del_consumer(ids []string) {
-	pipe := Redis.Pipeline()
-	for _, consumer := range ids {
-		pipe.XGroupDelConsumer(CTX, Conf.StreamName, Conf.ConsumerGroupName, consumer)
-	}
-	_, err := pipe.Exec(CTX)
-	if err != nil {
-		log.Print("Couldnt delte the consuemr")
-	}
-
-}
-
-func Consumer_deleter() {
-	ticker := time.NewTicker(700 * time.Millisecond)
-	defer ticker.Stop()
-	var batch []string
-
-	for {
-		select {
-		case id := <-Del_channel:
-			batch = append(batch, id)
-
-		case <-ticker.C:
-			if len(batch) > 0 {
-				Del_consumer(batch)
-				batch = nil
-			}
-		}
-	}
-}
-
 // scans the pending list entries to contantly find jobs with :
 // 1. expired leases to deliver them to new workers
 // 2. dead jobs that need to be pushed into the dead letter queue
@@ -135,12 +104,11 @@ func Pending_jobs() {
 		to_claim, err := Redis.XPendingExt(CTX, &redis.XPendingExtArgs{
 			Stream: Conf.StreamName,
 			Group:  Conf.ConsumerGroupName,
-			Idle:   time.Duration(Conf.IdleTime) * time.Second,
+			Idle:   time.Duration(LeaseVar.Load()),
 			Start:  "-",
 			End:    "+",
 			Count:  Conf.BatchSize,
 		}).Result()
-		//	log.Print("len:", len(to_claim))
 		if err != nil {
 			log.Print("Couldnt fetch pending jobs")
 			Worker_inquiry_channel <- id
@@ -154,12 +122,10 @@ func Pending_jobs() {
 		pipe := Redis.Pipeline()
 		hasDeadJobs := false
 		for _, job := range to_claim {
-			//log.Print("Retry count:", job.RetryCount)
 			if job.RetryCount <= Conf.RetryCount {
 				claim = append(claim, job.ID)
 			} else {
-				log.Print("Getting job for dead letter:", job.ID)
-				log.Print("Retry count:", job.RetryCount)
+
 				pipe.XRange(CTX, Conf.StreamName, job.ID, job.ID)
 				hasDeadJobs = true
 			}
@@ -193,13 +159,12 @@ func Pending_jobs() {
 			if hasDeadOps {
 				_, dead_err := deadPipe.Exec(CTX)
 				if dead_err != nil {
-					log.Fatal("Yeah this happened", dead_err)
+					log.Print("Couldnt process dead jobs", dead_err)
 				}
 			}
 		}
 
 		if len(claim) == 0 {
-			time.Sleep(10 * time.Millisecond)
 			Worker_inquiry_channel <- id
 			continue
 		}

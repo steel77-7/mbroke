@@ -34,7 +34,7 @@ func main() {
 	go utils.Acker()
 	go utils.Feed_to_worker()
 	go utils.Pending_jobs()
-
+	go utils.Lease_routine()
 	server := &http.Server{
 		Addr:           ":" + fmt.Sprint(utils.Conf.Port),
 		Handler:        router,

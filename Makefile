@@ -5,6 +5,6 @@ bench-producer:
 	cd _bench && go run main.go
 
 bench-consumer:
-	cd ./_bench/consumer && docker compose up --build  -d --scale worker=100
+	cd ./_bench/consumer && docker compose up --build  -d --scale worker=250
 bench-stop:
 	cd ./_bench/consumer && docker compose down

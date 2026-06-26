@@ -198,7 +198,7 @@ func Producer() {
 	for i := 0; i < workers; i++ {
 
 		go func() {
-			for c := 0; c < 1000; c++ {
+			for c := 0; c < 10000; c++ {
 
 				id := jobsProduced.Add(1)
 

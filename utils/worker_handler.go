@@ -203,17 +203,14 @@ func (s *Server) Worker_feeder() {
 					ID:   msg.ID,
 					Data: dataVal,
 				})
+				SentTime.LoadOrStore(msg.ID, time.Now())
 			}
 
 			tbs, _ := json.Marshal(jobs)
 			val.mu.Lock()
-			err := val.send(PULL, tbs)
-			if err != nil {
-				log.Print("couldnt send the pull res", err)
-			}
+			val.send(PULL, tbs)
 
 			val.mu.Unlock()
-
 		}
 
 	}
@@ -353,7 +350,12 @@ func (client *Client) message_handler() {
 			}
 
 			jobID := string(msg.Payload)
-			if jobID != "" {
+			if jobID != "" && jobID != "dack" {
+				duration, present := SentTime.Load(jobID)
+				if present {
+					//startTime := time.Now().Add(-duration.(time.Time))
+					Time_channel <- time.Since(duration.(time.Time))
+				}
 				ACK_channel <- jobID
 			}
 			client.mu.Lock()

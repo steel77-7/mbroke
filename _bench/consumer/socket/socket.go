@@ -44,15 +44,15 @@ type Message struct {
 
 const (
 	// crash probabilities (per event)
-	crashOnJobProb  = 0    // 3% chance of crashing while processing a job
-	crashRandomProb = 0    // 1% chance per heartbeat tick of random crash
-	zombieProb      = 0    // 2% chance of becoming a zombie (stop responding but keep conn open)
-	halfWriteProb   = 0    // 2% chance of writing a partial message then dying
-	garbageProb     = 0    // 2% chance of sending garbage bytes
-	nackProb        = 0.50 // 15% chance of NACKing a job (sending "0" TACK)
-	slowProcessProb = 0    // 10% chance of very slow processing (2-5 seconds)
-	doubleAckProb   = 0    // 3% chance of sending duplicate TACK
-	wrongTypeProb   = 0    // 2% chance of sending a message with wrong type byte
+	crashOnJobProb  = 0 // 3% chance of crashing while processing a job
+	crashRandomProb = 0 // 1% chance per heartbeat tick of random crash
+	zombieProb      = 0 // 2% chance of becoming a zombie (stop responding but keep conn open)
+	halfWriteProb   = 0 // 2% chance of writing a partial message then dying
+	garbageProb     = 0 // 2% chance of sending garbage bytes
+	nackProb        = 0 // 15% chance of NACKing a job (sending "0" TACK)
+	slowProcessProb = 0 // 10% chance of very slow processing (2-5 seconds)
+	doubleAckProb   = 0 // 3% chance of sending duplicate TACK
+	wrongTypeProb   = 0 // 2% chance of sending a message with wrong type byte
 
 	// timing
 	heartbeatInterval = 100 * time.Millisecond
@@ -64,28 +64,6 @@ const (
 	reconnectDelay    = 500 * time.Millisecond
 )
 
-// const (
-// 	// crash probabilities (per event)
-// 	crashOnJobProb  = 0 // 3% chance of crashing while processing a job
-// 	crashRandomProb = 0 // 1% chance per heartbeat tick of random crash
-// 	zombieProb      = 0 // 2% chance of becoming a zombie (stop responding but keep conn open)
-// 	halfWriteProb   = 0 // 2% chance of writing a partial message then dying
-// 	garbageProb     = 0 // 2% chance of sending garbage bytes
-// 	nackProb        = 0 // 15% chance of NACKing a job (sending "0" TACK)
-// 	slowProcessProb = 0 // 10% chance of very slow processing (2-5 seconds)
-// 	doubleAckProb   = 0 // 3% chance of sending duplicate TACK
-// 	wrongTypeProb   = 0 // 2% chance of sending a message with wrong type byte
-
-// 	// timing
-// 	heartbeatInterval = 100 * time.Millisecond
-// 	minProcessTime    = 10 * time.Millisecond
-// 	maxProcessTime    = 20 * time.Millisecond
-// 	slowProcessMin    = 100 * time.Millisecond
-// 	slowProcessMax    = 110 * time.Millisecond
-// 	zombieLifetime    = 0 * time.Second // how long a zombie holds the connection
-// 	reconnectDelay    = 500 * time.Millisecond
-// )
-
 type BrokerClient struct {
 	conn      net.Conn
 	brokerIP  string
@@ -95,9 +73,8 @@ type BrokerClient struct {
 	pullReady chan struct{}
 	done      chan struct{}
 	closeOnce int32
-	id        int // for logging
+	id        int
 
-	// stats
 	jobsProcessed atomic.Int64
 	jobsNacked    atomic.Int64
 	crashes       atomic.Int64
